@@ -2,7 +2,7 @@
 """Build the architecture-v4 bundles (research/ARCHITECTURE_V4.md) and prove they compile.
 
   python build_v4.py --out-root submissions [--thinking 4096] [--timeout 90] [--model gemma-4-31b-it-qat-w4a16-ct]
-Writes <out-root>/v4_single and <out-root>/v4_phased, then for each: harness validate_directory + compile_submission
+Writes <out-root>/v4_single, v4_phased and v5_single (or --only a subset), then for each: harness validate_directory + compile_submission
 into a live ADK agent tree (stub tools / stub model), printing the agent tree. Run inside harness-venv.
 """
 import argparse, shutil
@@ -29,8 +29,8 @@ def write(p, text):
     p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text, encoding="utf-8")
 
 
-def build_single(out, a):
-    write(out / "prompts/system.md", (HERE / "prompts/system_v4.md").read_text(encoding="utf-8"))
+def build_single(out, a, prompt="system_v4.md"):
+    write(out / "prompts/system.md", (HERE / "prompts" / prompt).read_text(encoding="utf-8"))
     write(out / "configs/sampling.yaml", sampling(a.thinking))
     write(out / "eval_config.yaml", eval_cfg(a.timeout))
     write(out / "agent.yaml", f"name: swe_agent\nmodel: {a.model}\ninstruction: !include prompts/system.md\ntools:\n"
@@ -85,8 +85,12 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--out-root", default="submissions")
     ap.add_argument("--thinking", type=int, default=4096); ap.add_argument("--timeout", type=int, default=90)
     ap.add_argument("--model", default="gemma-4-31b-it-qat-w4a16-ct"); ap.add_argument("--suffix", default="")
+    ap.add_argument("--only", nargs="*", default=None, help="subset of bundle names to build")
     a = ap.parse_args()
-    for name, fn in (("v4_single", build_single), ("v4_phased", build_phased)):
+    bundles = (("v4_single", build_single), ("v4_phased", build_phased),
+               ("v5_single", lambda out, a: build_single(out, a, "system_v5.md")))
+    for name, fn in bundles:
+        if a.only and name not in a.only: continue
         out = Path(a.out_root) / (name + a.suffix); shutil.rmtree(out, ignore_errors=True); fn(out, a)
         print(f"== {out}"); check(out, a.model); print("VALID + COMPILED")
 
