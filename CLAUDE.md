@@ -13,6 +13,7 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
 2. **Diagnose**: run `vm/analyze_traces.py` on the newest eval; the largest failure bucket picks the next change.
+   Write the post-mortem with the `agent-introspection-debugging` skill (capture -> diagnosis table -> recovery -> report).
 3. **Research** before building: forum/notebooks (`research/raw/`), papers, harness source on the VM. Record findings in `research/raw/`.
 4. **Build** one change at a time as a bundle (`vm/build_v4.py`, `vm/make_submission.py`) or a model (`vm/train_qlora.py`).
    Validate + compile every bundle (`build_v4.py` check). Never ship an unvalidated bundle.
@@ -21,8 +22,16 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
    host = `scorer-host-venv`, which matches Kaggle soundness on 69/71 tasks). Kaggle L4 (30 GPU-h/week): `vm/make_kaggle_eval.py agent`.
    Compare with `vm/compare_runs.py <baseline_dir> <candidate_dir>` - adopt only on >= +3 tasks paired and no time regression.
    The public LB is a draw (SD 1.56 tasks of 58): never decide from one LB score.
+   Follow `benchmark-optimization-loop` (one hypothesis per variant, ledger row per run, stop when the gain is within noise)
+   and report with `eval-harness` vocabulary (wins = capability, losses = regressions on tasks the baseline solved).
 6. **Ship**: the daily Kaggle slot goes to the best paired-eval bundle (standing approval; `vm/submit_when_open.sh`).
 7. **Record** in `research/STATE.md` (ledger row: date, artifact, change, paired result, LB) and `vm/README.md` (how-to, pitfalls).
+
+Audit the loop itself with `loop-design-check` whenever its rules change: the done-criterion is the paired eval
+(machine-decidable), the boundary is "no edits to tests or eval tasks", the judge is the replica/Kaggle grader (never
+the agent's own claim), and a human (the user) owns the goal.
+
+Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (MIT; source in `third_party/ecc/`).
 
 ## Hard facts (verified; details in research/ and memory)
 - Allowed models: gemma-4-{31b,12b,e4b,e2b}-it-qat-w4a16-ct. Scorer: vLLM 0.19.1 TP=4 on 4xL4, 32k context, 12 h for ~120 tasks.
