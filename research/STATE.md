@@ -62,3 +62,10 @@
   Kaggle L4 eval pushed 2026-10-24 ~18:20 UTC (50 tasks, same order); also queued on the VM replica.
 - Expectation (honest): three wording-only changes have tied; v5 is measured, not assumed. Adopt only on >= +3 paired.
 - Project is now a git repo (atomic commits on `main`); no remote configured yet.
+
+## 2026-10-24 18:15 UTC — submission + plan to win
+- Submitted v3t2k again (ref 57603042; its Oct 21 attempt was lost to the scorer outage, host confirmed and promised reruns).
+  Oct 23 slot was lost (the old one-shot queue had ended) -> `vm/daily_ship.sh` now ships `results/ship.txt` every UTC day.
+- Found the **$10k Small Model bonus** (E2B/E4B base, LoRA allowed, one of the 2 final picks; top public 0.06).
+  Plan: `research/PLAN_TO_WIN.md` (Track A 31B daily draws + mean raising; Track B E4B baseline -> E4B bundle -> 31B->E4B
+  distillation LoRA). E4B (11 GB) downloaded to the VM.
