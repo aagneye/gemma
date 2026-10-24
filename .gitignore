@@ -1,0 +1,25 @@
+# Vendored skill repositories are separate git checkouts (see third_party/README.md for source + commit)
+third_party/superpowers/
+third_party/claude-skills/
+
+# Competition materials (Kaggle rules: not for redistribution) and binary wheels
+data/
+harness/
+*.whl
+
+# Model weights, adapters, datasets and run outputs live on the VM, never in git
+*.safetensors
+*.bin
+*.pt
+*.parquet
+*.zip
+
+# Python / OS noise
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+Thumbs.db
+
+# Local Claude Code state
+.claude/settings.local.json
