@@ -1,0 +1,3 @@
+# Scripts are copied to the Linux VM: keep LF line endings in the working tree on every platform
+* text=auto eol=lf
+*.ipynb text eol=lf
