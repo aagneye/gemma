@@ -9,6 +9,9 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
 - Do not wait for Kaggle scores to decide: replicate the public-score evaluation on the Azure VM (and in Kaggle notebooks)
   and decide from local, paired measurements. Train on whatever GPUs are free.
 - Keep going until the goal is reached. Final deadline Dec 2 2026; paper track Nov 12.
+- Second target (added 2026-10-24): the **$10k Small Model bonus** (best E2B/E4B-based submission; top public is 0.06).
+  Final picks = best 31B bundle + best E4B bundle. Full plan: `research/PLAN_TO_WIN.md`.
+- Daily slots ship automatically (`vm/daily_ship.sh` submits the bundle named in `results/ship.txt` on the VM).
 
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
