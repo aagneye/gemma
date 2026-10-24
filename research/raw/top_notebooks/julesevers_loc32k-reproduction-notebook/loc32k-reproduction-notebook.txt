@@ -1,0 +1,1334 @@
+
+##### [markdown 0]
+# Where to Look on a 32K Budget: reproduction notebook
+
+This notebook reproduces the localization results (Tables 1 and the localization figures) of the paper *Where to Look on a 32K Budget: token-accounted, training-free fault localization for small local coding agents* (Gemma 4 Developer Agent Paper Track).
+
+It runs on CPU only and takes about 10 minutes. **Internet must be on**, because the notebook clones the four task repositories and the Gemma tokenizer from GitHub. Attach the competition data so that `tasks.jsonl` can be found.
+
+The end-to-end evaluation (Section 5 of the paper) is not reproduced here; see `e2e/README.md` in the code dataset. Work files, including data derived from the competition data, are kept in `/tmp`; only aggregate results are copied to `/kaggle/working/results`.
+
+##### [code 1]
+!pip -q install rank_bm25 sentencepiece
+import glob, os, shutil, subprocess, pathlib
+W = pathlib.Path('/tmp/loc32k_paper'); (W/'data').mkdir(parents=True, exist_ok=True); (W/'repos').mkdir(exist_ok=True); (W/'src').mkdir(exist_ok=True); (W/'loc32k').mkdir(exist_ok=True); (W/'out'/'scores').mkdir(parents=True, exist_ok=True)
+cands = glob.glob('/kaggle/input/**/tasks.jsonl', recursive=True)
+print(cands); shutil.copy(cands[0], W/'data'/'tasks.jsonl')
+
+##### [code 2]
+%cd /tmp/loc32k_paper
+for r in ['fastapi/fastapi','Textualize/rich','psf/requests','encode/httpx']:
+    d = 'repos/' + r.replace('/', '_')
+    if not os.path.exists(d): subprocess.run(['git','clone','-q',f'https://github.com/{r}',d], check=True)
+if not os.path.exists('data/gemma3_cleaned_262144_v2.spiece.model'):
+    import tempfile; gp = tempfile.mkdtemp()
+    subprocess.run(['git','clone','-q','--depth','1','https://github.com/google/gemma_pytorch',gp], check=True)
+    shutil.copy(gp + '/tokenizer/gemma3_cleaned_262144_v2.spiece.model','data/')
+
+##### [code 3]
+%%writefile src/annotate.py
+"""Build gold localization annotations for the Gemma-4 Developer Agent tasks.
+
+For every task we read the repository *at base_commit* straight from git objects
+(no checkout), parse the gold `patch`, and map every changed line back to the
+innermost enclosing function/class of the pre-patch file (Python AST).
+
+Output: data/gold.jsonl  (one record per task)
+"""
+import ast, json, re, subprocess, sys, functools
+from collections import defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+REPO_DIR = {'fastapi/fastapi': 'fastapi_fastapi', 'Textualize/rich': 'Textualize_rich',
+            'psf/requests': 'psf_requests', 'encode/httpx': 'encode_httpx'}
+
+
+def git(repo, *args):
+    return subprocess.run(['git', '-C', str(ROOT / 'repos' / REPO_DIR[repo]), *args],
+                          capture_output=True, check=True).stdout
+
+
+@functools.lru_cache(maxsize=None)
+def ls_tree(repo, commit):
+    out = git(repo, 'ls-tree', '-r', '-l', commit).decode()
+    files = {}
+    for line in out.splitlines():
+        meta, path = line.split('\t', 1)
+        _mode, typ, sha, size = meta.split()
+        if typ == 'blob':
+            files[path] = (sha, int(size) if size != '-' else 0)
+    return files
+
+
+@functools.lru_cache(maxsize=200000)
+def blob(repo, sha):
+    return git(repo, 'cat-file', 'blob', sha).decode('utf-8', 'replace')
+
+
+def is_test_path(p):
+    parts = p.split('/')
+    name = parts[-1]
+    return (name.startswith('test_') or name.endswith('_test.py') or name == 'conftest.py'
+            or any(x in ('tests', 'test', 'testing') for x in parts[:-1]))
+
+
+HUNK = re.compile(r'^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@')
+
+
+def parse_patch(patch):
+    """Return {path: {'new_file','deleted','old_lines','added','removed'}}. Hunk-length aware."""
+    files = {}
+    cur = None
+    old_ln = None
+    o_left = n_left = 0
+    pending_src = None
+    for line in patch.splitlines():
+        if o_left > 0 or n_left > 0:
+            if line.startswith('-'):
+                cur['old_lines'].add(old_ln); cur['removed'] += 1; old_ln += 1; o_left -= 1
+            elif line.startswith('+'):
+                cur['old_lines'].add(max(old_ln - 1, 1)); cur['added'] += 1; n_left -= 1
+            elif line.startswith('\\'):
+                pass
+            else:
+                old_ln += 1; o_left -= 1; n_left -= 1
+            continue
+        if line.startswith('--- '):
+            pending_src = line[4:].split('\t')[0]
+            continue
+        if line.startswith('+++ '):
+            dst = line[4:].split('\t')[0]
+            path = dst[2:] if dst.startswith('b/') else (pending_src[2:] if dst == '/dev/null' else dst)
+            cur = files.setdefault(path, {'new_file': pending_src == '/dev/null', 'deleted': dst == '/dev/null',
+                                          'old_lines': set(), 'added': 0, 'removed': 0})
+            continue
+        m = HUNK.match(line)
+        if m and cur is not None:
+            old_ln = int(m.group(1))
+            o_left = int(m.group(2)) if m.group(2) is not None else 1
+            n_left = int(m.group(4)) if m.group(4) is not None else 1
+            if old_ln == 0 and o_left == 0:
+                cur['new_file'] = True
+                old_ln = 1
+            continue
+    return files
+
+
+def def_spans(src):
+    """List of (qualname, kind, start, end) for every def/class (nested qualnames)."""
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    spans = []
+
+    def visit(node, prefix):
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                q = f'{prefix}.{ch.name}' if prefix else ch.name
+                start = min([ch.lineno] + [d.lineno for d in ch.decorator_list])
+                spans.append((q, 'class' if isinstance(ch, ast.ClassDef) else 'func', start, ch.end_lineno))
+                visit(ch, q)
+            else:
+                visit(ch, prefix)
+    visit(tree, '')
+    return spans
+
+
+def innermost(spans, line):
+    best = None
+    for q, k, s, e in spans:
+        if s <= line <= e and (best is None or (e - s) < (best[3] - best[2])):
+            best = (q, k, s, e)
+    return best
+
+
+def main():
+    rows = [json.loads(l) for l in open(ROOT / 'data' / 'tasks.jsonl')]
+    out = open(ROOT / 'data' / 'gold.jsonl', 'w')
+    for r in rows:
+        repo, commit = r['repo'], r['base_commit']
+        tree = ls_tree(repo, commit)
+        pf = parse_patch(r['patch'])
+        tpf = parse_patch(r['test_patch'])
+        rec = {'instance_id': r['instance_id'], 'repo': repo, 'base_commit': commit, 'files': []}
+        for path, info in pf.items():
+            ent = {'path': path, 'ext': Path(path).suffix, 'new_file': info['new_file'] or path not in tree,
+                   'deleted': info['deleted'], 'added': info['added'], 'removed': info['removed'],
+                   'is_test': is_test_path(path), 'units': []}
+            if not ent['new_file'] and path.endswith('.py') and path in tree:
+                src = blob(repo, tree[path][0])
+                spans = def_spans(src)
+                ent['n_lines'] = src.count('\n') + 1
+                if spans is not None:
+                    units = set()
+                    for ln in sorted(info['old_lines']):
+                        b = innermost(spans, ln)
+                        units.add(b[0] if b else '<module>')
+                    ent['units'] = sorted(units)
+                ent['changed_old_lines'] = sorted(info['old_lines'])
+            rec['files'].append(ent)
+        rec['test_files'] = sorted(tpf.keys())
+        rec['test_new_files'] = sorted(p for p, i in tpf.items() if i['new_file'] or p not in tree)
+        out.write(json.dumps(rec) + '\n')
+    out.close()
+    print('wrote', len(rows))
+
+
+if __name__ == '__main__':
+    main()
+
+
+##### [code 4]
+%%writefile src/retrieval.py
+"""Training-free localization methods + evaluation under token budgets.
+
+Every method sees exactly what the agent sees at inference time inside Container A:
+the problem statement and the repository snapshot at base_commit (including git
+history *before* base_commit). Nothing from `patch` / `test_patch` is used for ranking.
+"""
+import ast, json, math, re, subprocess, functools, sys
+from collections import defaultdict, Counter
+from pathlib import Path
+
+import numpy as np
+import sentencepiece as spm
+from rank_bm25 import BM25Okapi
+
+sys.path.insert(0, str(Path(__file__).parent))
+from annotate import ROOT, REPO_DIR, ls_tree, blob, is_test_path, def_spans, git
+
+SP = spm.SentencePieceProcessor(model_file=str(ROOT / 'data' / 'gemma3_cleaned_262144_v2.spiece.model'))
+
+
+@functools.lru_cache(maxsize=None)
+def ntok(text):
+    return len(SP.encode(text))
+
+
+# ---------------------------------------------------------------- tokenization
+STOP = set('''a an the of to in on for and or is are be by with as at from this that it its
+not no if else elif return def class self cls import none true false pass raise try except
+finally while yield lambda async await we our you your can should would will just also use
+used using add fix fixes fixed support pr pull request issue issues https http github com www
+when then than into out so do does there here which what new make one all any but have has
+was were been more most some such only other see e g i ie eg etc via str int bool dict list
+type value'''.split())
+
+CAMEL = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+')
+
+
+def split_ident(tok):
+    parts = []
+    for p in re.split(r'[_\W]+', tok):
+        if p:
+            parts += [x.lower() for x in CAMEL.findall(p)]
+    return parts
+
+
+def text_tokens(text, keep_full=True):
+    out = []
+    for raw in re.findall(r'[A-Za-z_][A-Za-z0-9_]*', text):
+        low = raw.lower()
+        if keep_full and ('_' in raw or re.search(r'[a-z][A-Z]', raw)) and low not in STOP:
+            out.append(low)  # keep the compound identifier itself
+        for p in split_ident(raw):
+            if len(p) > 1 and p not in STOP:
+                out.append(p)
+    return out
+
+
+def clean_statement(s):
+    s = re.sub(r'<!--.*?-->', ' ', s, flags=re.S)  # PR template comments
+    s = re.sub(r'https?://\S+', ' ', s)
+    return s
+
+
+IDENT_PATTERNS = [
+    r'`([^`\n]{2,80})`',                       # backticked code
+    r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\b',  # dotted paths
+    r'\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)\b',  # CamelCase
+    r'\b([a-z0-9]+(?:_[a-z0-9]+)+)\b',          # snake_case
+    r'\b(\w+\.py)\b',                          # file names
+]
+
+
+def extract_identifiers(s):
+    found = set()
+    for pat in IDENT_PATTERNS:
+        for m in re.findall(pat, s):
+            for piece in re.findall(r'[A-Za-z_][A-Za-z0-9_]*', m):
+                if len(piece) > 2 and piece.lower() not in STOP:
+                    found.add(piece)
+    return found
+
+
+AUX_DIRS = {'docs', 'doc', 'docs_src', 'examples', 'example', 'benchmarks', 'benchmark', 'scripts', 'tools'}
+
+
+def scoped(idx, rank):
+    """Soft scoping: library files first (in rank order), then auxiliary files (in rank order)."""
+    return [f for f in rank if f not in idx.aux] + [f for f in rank if f in idx.aux]
+
+
+# ---------------------------------------------------------------- repository index
+class RepoIndex:
+    def __init__(self, repo, commit, include_docs_src=True):
+        self.repo, self.commit = repo, commit
+        tree = ls_tree(repo, commit)
+        self.files = sorted(p for p in tree if p.endswith('.py') and not is_test_path(p))
+        self.src = {p: blob(repo, tree[p][0]) for p in self.files}
+        self.units = []  # (file, qualname, start, end, text)
+        self.defs_by_name = defaultdict(set)  # short name -> files defining it
+        self.file_defs = {}
+        for p in self.files:
+            s = self.src[p]
+            lines = s.split('\n')
+            spans = def_spans(s) or []
+            self.file_defs[p] = spans
+            covered = np.zeros(len(lines) + 2, dtype=bool)
+            for q, k, a, b in spans:
+                self.defs_by_name[q.split('.')[-1].lower()].add(p)
+            # top-level-ish units: functions (any depth, innermost-free) and class headers
+            for q, k, a, b in spans:
+                if k == 'func':
+                    # skip functions nested in functions (they're inside the parent's text)
+                    parent = q.rsplit('.', 1)[0] if '.' in q else None
+                    if parent and any(pq == parent and pk == 'func' for pq, pk, _, _ in spans):
+                        continue
+                    self.units.append((p, q, a, b, '\n'.join(lines[a - 1:b])))
+                    covered[a:b + 1] = True
+            rest = [l for i, l in enumerate(lines, 1) if not covered[i]]
+            self.units.append((p, '<module>', 1, len(lines), '\n'.join(rest)))
+        self.fidx = {p: i for i, p in enumerate(self.files)}
+        # auxiliary (non-library) code: the same directories the harness prunes from its workspace layout
+        self.aux = {p for p in self.files if p.split('/')[0].lower() in AUX_DIRS}
+        self._file_bm25 = self._unit_bm25 = None
+
+    # -- token costs (Gemma tokenizer)
+    def file_tokens(self, p):
+        return ntok(self.src[p])
+
+    def unit_tokens(self, u):
+        return ntok(u[4])
+
+    def skeleton(self, p):
+        """Signatures-only outline of a file (repo-map style)."""
+        lines = self.src[p].split('\n')
+        out = []
+        for q, k, a, b in self.file_defs[p]:
+            depth = q.count('.')
+            sig = lines[a - 1].strip() if a - 1 < len(lines) else ''
+            # skip decorators: find def/class line
+            for j in range(a - 1, min(b, len(lines))):
+                if re.match(r'\s*(async\s+def|def|class)\b', lines[j]):
+                    sig = lines[j].strip(); break
+            out.append('  ' * depth + sig)
+        return p + ':\n' + '\n'.join(out)
+
+    # -- BM25 indexes
+    def file_bm25(self):
+        if self._file_bm25 is None:
+            docs = [text_tokens(p.replace('/', ' ') + ' ' + self.src[p]) for p in self.files]
+            self._file_bm25 = BM25Okapi(docs)
+        return self._file_bm25
+
+    def unit_bm25(self):
+        if self._unit_bm25 is None:
+            docs = [text_tokens(u[0].replace('/', ' ') + ' ' + u[1] + ' ' + u[4]) for u in self.units]
+            self._unit_bm25 = BM25Okapi(docs)
+        return self._unit_bm25
+
+
+# ---------------------------------------------------------------- history priors
+@functools.lru_cache(maxsize=None)
+def history(repo, commit, n=300):
+    out = git(repo, 'log', '-n', str(n), '--name-only', '--format=@@%H', commit).decode()
+    commits = []
+    for block in out.split('@@')[1:]:
+        lines = block.strip().split('\n')
+        commits.append([l for l in lines[1:] if l.strip()])
+    return commits
+
+
+def recency_scores(repo, commit, files, n=300, half_life=25):
+    commits = history(repo, commit, n)
+    sc = defaultdict(float)
+    for age, fl in enumerate(commits):
+        w = 0.5 ** (age / half_life)
+        for f in fl:
+            sc[f] += w
+    return np.array([sc.get(p, 0.0) for p in files])
+
+
+# ---------------------------------------------------------------- static graph
+def build_graph(idx):
+    """File-level graph: import edges + name-reference edges (call by bare name of a def)."""
+    mod_of = {}
+    for p in idx.files:
+        m = p[:-3].replace('/', '.')
+        if m.endswith('.__init__'):
+            m = m[:-9]
+        mod_of[m] = p
+    adj = defaultdict(set)
+    for p in idx.files:
+        try:
+            tree = ast.parse(idx.src[p])
+        except SyntaxError:
+            continue
+        pkg = p[:-3].replace('/', '.').rsplit('.', 1)[0]
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in mod_of: adj[p].add(mod_of[a.name])
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ''
+                if node.level:
+                    parts = pkg.split('.')
+                    up = parts[:len(parts) - (node.level - 1)] if node.level > 1 else parts
+                    base = '.'.join(up + ([node.module] if node.module else []))
+                if base in mod_of: adj[p].add(mod_of[base])
+                for a in node.names:
+                    full = f'{base}.{a.name}'
+                    if full in mod_of: adj[p].add(mod_of[full])
+            elif isinstance(node, ast.Call):
+                f = node.func
+                nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+                if nm: names.add(nm.lower())
+        for nm in names:
+            defs = idx.defs_by_name.get(nm, ())
+            if 0 < len(defs) <= 3:
+                for q in defs:
+                    if q != p: adj[p].add(q)
+    und = defaultdict(set)
+    for a, bs in adj.items():
+        for b in bs:
+            if a != b:
+                und[a].add(b); und[b].add(a)
+    return und
+
+
+# ---------------------------------------------------------------- rankers (return file score vectors)
+def rank_from_scores(files, scores):
+    order = np.argsort(-scores, kind='stable')
+    return [files[i] for i in order]
+
+
+def s_bm25_file(idx, q):
+    return np.asarray(idx.file_bm25().get_scores(q), dtype=float)
+
+
+def s_bm25_unit(idx, q):
+    us = np.asarray(idx.unit_bm25().get_scores(q), dtype=float)
+    fs = np.zeros(len(idx.files))
+    for u, s in zip(idx.units, us):
+        i = idx.fidx[u[0]]
+        fs[i] = max(fs[i], s)
+    return fs, us
+
+
+def s_ident(idx, idents):
+    """Exact identifier hits: defs named like an identifier from the statement, and path matches."""
+    fs = np.zeros(len(idx.files))
+    n = len(idx.files)
+    for ident in idents:
+        low = ident.lower()
+        hits = set(idx.defs_by_name.get(low, ()))
+        for p in idx.files:
+            stem = Path(p).stem.lower()
+            if stem == low or low in p.lower().replace('/', '.').split('.'):
+                hits.add(p)
+        if hits:
+            w = math.log(1 + n / len(hits))
+            for p in hits:
+                fs[idx.fidx[p]] += w
+    return fs
+
+
+def s_grep(idx, idents):
+    """What `grep -rl` would give: files containing an identifier, IDF-weighted."""
+    fs = np.zeros(len(idx.files))
+    n = len(idx.files)
+    for ident in idents:
+        if len(ident) < 4: continue
+        hits = [i for i, p in enumerate(idx.files) if ident in idx.src[p]]
+        if hits and len(hits) < n * 0.5:
+            w = math.log(1 + n / len(hits))
+            for i in hits: fs[i] += w
+    return fs
+
+
+def rrf(*rankings, k=60, weights=None):
+    weights = weights or [1.0] * len(rankings)
+    sc = defaultdict(float)
+    for w, r in zip(weights, rankings):
+        for pos, f in enumerate(r):
+            sc[f] += w / (k + pos + 1)
+    return sorted(sc, key=lambda f: -sc[f])
+
+
+def graph_rerank(idx, graph, base_scores, alpha=0.3, seeds=5):
+    """One-hop propagation from top seeds: s' = s + alpha * max_{seed neighbor} s(seed)."""
+    files = idx.files
+    s = base_scores / (base_scores.max() + 1e-9)
+    order = np.argsort(-s)[:seeds]
+    boost = np.zeros(len(files))
+    for i in order:
+        for nb in graph.get(files[i], ()):
+            j = idx.fidx.get(nb)
+            if j is not None:
+                boost[j] = max(boost[j], s[i])
+    return s + alpha * boost
+
+
+##### [code 5]
+%%writefile src/evaluate.py
+"""Run all localization methods on all tasks; write per-task results + aggregate metrics."""
+import json, math, sys, time
+from collections import defaultdict
+from pathlib import Path
+import numpy as np
+
+sys.path.insert(0, str(Path(__file__).parent))
+from retrieval import *  # noqa
+
+KS = [1, 3, 5, 10, 20]
+BUDGETS = [1000, 2000, 4000, 8000, 16000, 32000]
+CALLS = [1, 2, 3, 5, 10, 20]
+READ_LINES = 150  # harness read_file cap
+
+
+def gold_units(idx, gfile):
+    """Map changed old lines to our unit inventory (top-level-or-method functions, else <module>)."""
+    p = gfile['path']
+    us = [u for u in idx.units if u[0] == p and u[1] != '<module>']
+    out = set()
+    for ln in gfile.get('changed_old_lines', []):
+        best = None
+        for u in us:
+            if u[2] <= ln <= u[3] and (best is None or u[3] - u[2] < best[3] - best[2]):
+                best = u
+        out.add((p, best[1] if best else '<module>'))
+    return out
+
+
+def file_metrics(rank, gold):
+    m = {}
+    pos = [rank.index(g) + 1 if g in rank else 10 ** 6 for g in gold]
+    for k in KS:
+        m[f'hit@{k}'] = float(min(pos) <= k)
+        m[f'recall@{k}'] = sum(p <= k for p in pos) / len(gold)
+        m[f'all@{k}'] = float(max(pos) <= k)
+    m['mrr'] = 1.0 / min(pos) if min(pos) < 10 ** 6 else 0.0
+    m['first_rank'] = min(pos)
+    return m
+
+
+def budget_curve_files(idx, rank, gold, gunits):
+    """Read whole files in rank order. Cost in tokens and in read_file calls (150 lines/call)."""
+    tok = 0; calls = 0; res_tok = {}; res_calls = {}
+    got_f = set(); got_u = set()
+    events = []
+    for f in rank[:60]:
+        t = idx.file_tokens(f); c = math.ceil((idx.src[f].count('\n') + 1) / READ_LINES)
+        tok += t; calls += c
+        if f in gold: got_f.add(f); got_u |= {u for u in gunits if u[0] == f}
+        events.append((tok, calls, len(got_f) / len(gold), len(got_u) / max(1, len(gunits))))
+    for B in BUDGETS:
+        ok = [e for e in events if e[0] <= B]
+        res_tok[B] = (ok[-1][2], ok[-1][3]) if ok else (0.0, 0.0)
+    for C in CALLS:
+        ok = [e for e in events if e[1] <= C]
+        res_calls[C] = (ok[-1][2], ok[-1][3]) if ok else (0.0, 0.0)
+    return res_tok, res_calls
+
+
+def budget_curve_units(idx, unit_order, gold, gunits, skeleton_files=()):
+    """Read function-level units in rank order (optionally after paying for skeletons).
+    Each unit read = one read_file call with a line range (units > 150 lines cost >1 call)."""
+    tok = sum(ntok(idx.skeleton(f)) for f in skeleton_files); calls = 0
+    got_f = set(); got_u = set(); events = [(tok, calls, 0.0, 0.0)]
+    for ui in unit_order[:400]:
+        u = idx.units[ui]
+        tok += idx.unit_tokens(u); calls += max(1, math.ceil((u[4].count('\n') + 1) / READ_LINES))
+        if (u[0], u[1]) in gunits:
+            got_u.add((u[0], u[1])); got_f.add(u[0])
+        events.append((tok, calls, len(got_f) / len(gold), len(got_u) / max(1, len(gunits))))
+    res_tok, res_calls = {}, {}
+    for B in BUDGETS:
+        ok = [e for e in events if e[0] <= B]
+        res_tok[B] = (ok[-1][2], ok[-1][3]) if ok else (0.0, 0.0)
+    for C in CALLS:
+        ok = [e for e in events if e[1] <= C]
+        res_calls[C] = (ok[-1][2], ok[-1][3]) if ok else (0.0, 0.0)
+    return res_tok, res_calls
+
+
+def main():
+    tasks = {json.loads(l)['instance_id']: json.loads(l) for l in open(ROOT / 'data' / 'tasks.jsonl')}
+    gold_all = sorted((json.loads(l) for l in open(ROOT / 'data' / 'gold.jsonl')), key=lambda g: (g['repo'], g['base_commit']))
+    out = open(ROOT / 'out' / 'per_task.jsonl', 'w')
+    idx_cache = {}
+    t0 = time.time()
+    for n, g in enumerate(gold_all):
+        t = tasks[g['instance_id']]
+        key = (g['repo'], g['base_commit'])
+        if key not in idx_cache:
+            idx_cache.clear()
+            idx_cache[key] = (RepoIndex(*key), None)
+        idx, graph = idx_cache[key]
+        if graph is None:
+            graph = build_graph(idx); idx_cache[key] = (idx, graph)
+        gfiles = [f for f in g['files'] if not f['new_file'] and f['path'] in idx.fidx]
+        gold = [f['path'] for f in gfiles]
+        rec = {'instance_id': g['instance_id'], 'repo': g['repo'], 'n_corpus_files': len(idx.files),
+               'n_corpus_units': len(idx.units), 'gold_files': gold,
+               'new_files': [f['path'] for f in g['files'] if f['new_file']],
+               'repo_tokens': int(sum(idx.file_tokens(f) for f in idx.files)),
+               'repo_skeleton_tokens': int(sum(ntok(idx.skeleton(f)) for f in idx.files)),
+               'gold_file_tokens': [idx.file_tokens(f) for f in gold],
+               'gold_file_lines': [idx.src[f].count('\n') + 1 for f in gold],
+               'repo_chars': int(sum(len(idx.src[f]) for f in idx.files)),
+               'n_docs_src': sum(f.startswith('docs_src/') for f in idx.files)}
+        stmt = clean_statement(t['problem_statement'])
+        q = text_tokens(stmt)
+        idents = extract_identifiers(stmt)
+        rec['statement_words'] = len(re.findall(r'\w+', stmt))
+        rec['n_idents'] = len(idents)
+        rec['query_terms'] = len(q)
+        if not gold:
+            rec['skip'] = 'only_new_files'
+            out.write(json.dumps(rec) + '\n'); continue
+        gunits = set()
+        for f in gfiles: gunits |= gold_units(idx, f)
+        rec['gold_units'] = sorted(map(list, gunits))
+        rec['gold_unit_tokens'] = [idx.unit_tokens(u) for u in idx.units if (u[0], u[1]) in gunits]
+        rec['gold_units_detail'] = [[u[0], u[1], idx.unit_tokens(u)] for u in idx.units if (u[0], u[1]) in gunits]
+        # explicit-mention analysis
+        low = stmt.lower()
+        rec['mentions_gold_file'] = any(Path(f).stem.lower() in re.findall(r'\w+', low) and len(Path(f).stem) > 3 for f in gold)
+        rec['mentions_gold_unit'] = any(u[1] != '<module>' and u[1].split('.')[-1].lower() in low for u in gunits)
+
+        files = idx.files
+        S = {}
+        S['bm25_file'] = s_bm25_file(idx, q) if q else np.zeros(len(files))
+        fs_unit, us = s_bm25_unit(idx, q) if q else (np.zeros(len(files)), np.zeros(len(idx.units)))
+        S['bm25_func'] = fs_unit
+        S['ident'] = s_ident(idx, idents)
+        S['grep'] = s_grep(idx, idents)
+        S['recency'] = recency_scores(g['repo'], g['base_commit'], files)
+        sizes = np.array([idx.file_tokens(f) for f in files], dtype=float)
+        S['size_prior'] = np.log1p(sizes)
+        ranks = {k: rank_from_scores(files, v) for k, v in S.items()}
+        # sparse rankers only vote for files they actually score (>0) in RRF
+        pos_rank = {k: [f for f in ranks[k] if S[k][idx.fidx[f]] > 0] for k in S}
+        np.savez_compressed(ROOT / 'out' / 'scores' / f"{g['instance_id']}.npz", files=np.array(files),
+                            gold=np.array(gold), sizes=sizes, **S, bm25_func_graph=graph_rerank(idx, graph, S['bm25_func']))
+        # a deterministic random baseline (expected value computed analytically below)
+        def full(r):  # append unscored files in BM25 order so every ranking is complete
+            seen = set(r); return r + [f for f in ranks['bm25_func'] if f not in seen]
+        ranks['hybrid_lex'] = full(rrf(ranks['bm25_func'], pos_rank['ident'], pos_rank['grep']))
+        ranks['hybrid_lex+recency'] = full(rrf(ranks['bm25_func'], pos_rank['ident'], pos_rank['grep'], pos_rank['recency']))
+        ranks['bm25_func+graph'] = rank_from_scores(files, graph_rerank(idx, graph, S['bm25_func']))
+        hy = np.zeros(len(files))
+        for pos, f in enumerate(ranks['hybrid_lex+recency']): hy[idx.fidx[f]] = 1.0 / (60 + pos + 1)
+        ranks['hybrid+graph'] = rank_from_scores(files, graph_rerank(idx, graph, hy))
+        for m in list(ranks):
+            ranks[m + '@scoped'] = scoped(idx, ranks[m])
+        rec['n_aux_files'] = len(idx.aux)
+        rec['gold_in_aux'] = [f for f in gold if f in idx.aux]
+        rec['metrics'] = {m: file_metrics(r, gold) for m, r in ranks.items()}
+        # random baseline: expected hit@k for uniform random ranking (hypergeometric)
+        N, G = len(files), len(gold)
+        rec['metrics']['random'] = {f'hit@{k}': 1 - math.comb(N - G, k) / math.comb(N, k) for k in KS}
+        rec['metrics']['random'].update({f'recall@{k}': k / N for k in KS})
+        rec['ranks_top20'] = {m: r[:20] for m, r in ranks.items()}
+
+        # ---- budgeted reading strategies
+        # unit order for BM25-func (pure) and for hybrid: units ranked by unit score, tie-broken by file rank
+        unit_order_bm25 = list(np.argsort(-us, kind='stable'))
+        frank = {f: i for i, f in enumerate(ranks['hybrid_lex+recency'])}
+        # hybrid unit score: unit BM25 normalized + file-prior from hybrid rank
+        usn = us / (us.max() + 1e-9)
+        fprior = np.array([1.0 / (1 + frank[u[0]]) for u in idx.units])
+        hyb_unit = 0.5 * usn + 0.5 * fprior
+        # identifier-hit units get a bonus
+        il = {i.lower() for i in idents}
+        bonus = np.array([1.0 if u[1] != '<module>' and u[1].split('.')[-1].lower() in il else 0.0 for u in idx.units])
+        unit_order_hyb = list(np.argsort(-(hyb_unit + 0.5 * bonus), kind='stable'))
+        # two-stage (fixed a priori): units of the top-10 files of hybrid+graph, ordered by unit BM25; then the rest
+        aux_u = np.array([u[0] in idx.aux for u in idx.units], dtype=float)
+        top10 = set(ranks['hybrid+graph'][:10])
+        in_top = np.array([u[0] in top10 for u in idx.units])
+        unit_order_2stage = list(np.argsort(-(us / (us.max() + 1e-9) + 2.0 * in_top), kind='stable'))
+        strat = {}
+        strat['unit:2stage'] = budget_curve_units(idx, unit_order_2stage, gold, gunits)
+        top10s = set(ranks['hybrid+graph@scoped'][:10])
+        in_top_s = np.array([u[0] in top10s for u in idx.units])
+        strat['unit:2stage@scoped'] = budget_curve_units(idx, list(np.argsort(-(us / (us.max() + 1e-9) + 2.0 * in_top_s - 4.0 * aux_u), kind='stable')), gold, gunits)
+        strat['unit:bm25@scoped'] = budget_curve_units(idx, list(np.argsort(-(us / (us.max() + 1e-9) - 4.0 * aux_u), kind='stable')), gold, gunits)
+        strat['file:bm25_file@scoped'] = budget_curve_files(idx, ranks['bm25_file@scoped'], gold, gunits)
+        strat['file:bm25_file'] = budget_curve_files(idx, ranks['bm25_file'], gold, gunits)
+        strat['file:hybrid'] = budget_curve_files(idx, ranks['hybrid_lex+recency'], gold, gunits)
+        strat['unit:bm25'] = budget_curve_units(idx, unit_order_bm25, gold, gunits)
+        strat['unit:hybrid'] = budget_curve_units(idx, unit_order_hyb, gold, gunits)
+        strat['skel5+unit:hybrid'] = budget_curve_units(idx, unit_order_hyb, gold, gunits,
+                                                        skeleton_files=ranks['hybrid_lex+recency'][:5])
+        rec['budget'] = {k: {'tokens': {str(b): v[0][b] for b in BUDGETS}, 'calls': {str(c): v[1][c] for c in CALLS}}
+                         for k, v in strat.items()}
+        out.write(json.dumps(rec) + '\n'); out.flush()
+        print(f'[{n+1}/{len(gold_all)}] {g["instance_id"]} gold={len(gold)} hy@5={rec["metrics"]["hybrid_lex+recency"]["hit@5"]:.0f} '
+              f'bm25@5={rec["metrics"]["bm25_file"]["hit@5"]:.0f} t={time.time()-t0:.0f}s', flush=True)
+    out.close()
+
+
+if __name__ == '__main__':
+    main()
+
+
+##### [code 6]
+%%writefile src/ablate.py
+"""Ablations / sensitivity of the hybrid localizer. Defaults were fixed a priori
+(RRF k=60, recency half-life 25 commits over the last 300, graph alpha=0.3 from top-5 seeds);
+this script only *reports* how results move when they change."""
+import json, sys
+from pathlib import Path
+import numpy as np
+sys.path.insert(0, str(Path(__file__).parent))
+from retrieval import *  # noqa
+from evaluate import ROOT
+
+def metrics(rank, gold):
+    pos = [rank.index(g) + 1 if g in rank else 10 ** 6 for g in gold]
+    return {'hit@1': float(min(pos) <= 1), 'hit@5': float(min(pos) <= 5), 'hit@10': float(min(pos) <= 10),
+            'mrr': 1 / min(pos) if min(pos) < 10 ** 6 else 0.0}
+
+def main():
+    tasks = {json.loads(l)['instance_id']: json.loads(l) for l in open(ROOT / 'data' / 'tasks.jsonl')}
+    gold_all = sorted((json.loads(l) for l in open(ROOT / 'data' / 'gold.jsonl')), key=lambda g: (g['repo'], g['base_commit']))
+    res = defaultdict(list)
+    cache = {}
+    for g in gold_all:
+        key = (g['repo'], g['base_commit'])
+        if key not in cache:
+            cache.clear(); idx = RepoIndex(*key); cache[key] = (idx, build_graph(idx))
+        idx, graph = cache[key]
+        gold = [f['path'] for f in g['files'] if not f['new_file'] and f['path'] in idx.fidx]
+        if not gold: continue
+        files = idx.files
+        stmt = clean_statement(tasks[g['instance_id']]['problem_statement'])
+        q = text_tokens(stmt); idents = extract_identifiers(stmt)
+        S = {'bm25_func': s_bm25_unit(idx, q)[0], 'ident': s_ident(idx, idents), 'grep': s_grep(idx, idents),
+             'size': np.log1p(np.array([idx.file_tokens(f) for f in files], float))}
+        for hl in [5, 10, 25, 50, 100]:
+            for n in [50, 100, 300, 1000]:
+                S[f'rec_hl{hl}_n{n}'] = recency_scores(g['repo'], g['base_commit'], files, n=n, half_life=hl)
+        S['recency'] = S['rec_hl25_n300']
+        R = {k: rank_from_scores(files, v) for k, v in S.items()}
+        P = {k: [f for f in R[k] if S[k][idx.fidx[f]] > 0] for k in S}
+        P['bm25_func'] = R['bm25_func']; P['size'] = R['size']
+        def full(r):
+            seen = set(r); return r + [f for f in R['bm25_func'] if f not in seen]
+        def hyb(comps, k=60, rec='recency'):
+            return full(rrf(*[P[c if c != 'recency' else rec] for c in comps], k=k))
+        def graphed(rank, alpha=0.3, seeds=5):
+            hy = np.zeros(len(files))
+            for pos, f in enumerate(rank): hy[idx.fidx[f]] = 1.0 / (60 + pos + 1)
+            return rank_from_scores(files, graph_rerank(idx, graph, hy, alpha=alpha, seeds=seeds))
+        base = ['bm25_func', 'ident', 'grep', 'recency']
+        V = {}
+        V['full (hybrid+graph)'] = graphed(hyb(base))
+        V['hybrid, no graph'] = hyb(base)
+        for c in base:
+            V[f'- {c}'] = graphed(hyb([x for x in base if x != c]))
+        V['+ size prior'] = graphed(hyb(base + ['size']))
+        V['query-free: recency'] = R['recency']
+        V['query-free: recency+size'] = full(rrf(P['recency'], P['size']))
+        for k in [10, 30, 100]:
+            V[f'rrf k={k}'] = graphed(hyb(base, k=k))
+        for a in [0.1, 0.5, 1.0]:
+            V[f'graph alpha={a}'] = graphed(hyb(base), alpha=a)
+        for sd in [3, 10]:
+            V[f'graph seeds={sd}'] = graphed(hyb(base), seeds=sd)
+        for hl in [5, 10, 25, 50, 100]:
+            for n in [50, 100, 300, 1000]:
+                V[f'rec hl={hl} n={n}'] = graphed(hyb(base, rec=f'rec_hl{hl}_n{n}'))
+        for k, r in V.items():
+            m = metrics(r, gold); m['repo'] = g['repo']; m['id'] = g['instance_id']
+            res[k].append(m)
+        print(g['instance_id'], flush=True)
+    json.dump(res, open(ROOT / 'out' / 'ablations.json', 'w'))
+
+if __name__ == '__main__':
+    main()
+
+
+##### [code 7]
+%%writefile src/analysis.py
+"""Aggregate results: tables with 95% bootstrap CIs, paired tests, strata, figures -> out/results.json, out/fig*.png"""
+import json, sys, math
+from collections import defaultdict
+from pathlib import Path
+import numpy as np
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT = ROOT / 'out'
+rng = np.random.default_rng(0)
+B = 10000
+
+INK, INK2, GRID, SURF = '#0b0b0b', '#52514e', '#e4e3df', '#fcfcfb'
+SER = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948']
+plt.rcParams.update({'font.family': 'DejaVu Sans', 'font.size': 9, 'axes.edgecolor': INK2, 'axes.labelcolor': INK,
+                     'xtick.color': INK2, 'ytick.color': INK2, 'axes.spines.top': False, 'axes.spines.right': False,
+                     'axes.grid': True, 'grid.color': GRID, 'grid.linewidth': 0.6, 'figure.facecolor': SURF,
+                     'axes.facecolor': SURF, 'savefig.facecolor': SURF, 'legend.frameon': False})
+
+
+def ci(x):
+    x = np.asarray(x, float)
+    bs = rng.choice(x, (B, len(x))).mean(1)
+    return float(x.mean()), float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))
+
+
+def paired(a, b):
+    """Paired bootstrap on mean difference a-b; two-sided p via sign of resampled diff; plus exact McNemar."""
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    d = a - b
+    idx = rng.integers(0, len(d), (B, len(d)))
+    bs = d[idx].mean(1)
+    p = 2 * min((bs <= 0).mean(), (bs >= 0).mean())
+    n01 = int((a > b).sum()); n10 = int((a < b).sum())  # for binary metrics this is McNemar; otherwise a sign test
+    n = n01 + n10
+    mc = min(1.0, 2 * sum(math.comb(n, i) for i in range(0, min(n01, n10) + 1)) / 2 ** n) if n else 1.0
+    return {'diff': float(d.mean()), 'lo': float(np.percentile(bs, 2.5)), 'hi': float(np.percentile(bs, 97.5)),
+            'p_boot': float(min(1.0, max(p, 1 / B))), 'wins': n01, 'losses': n10, 'p_mcnemar': mc}
+
+
+def main():
+    R = [json.loads(l) for l in open(OUT / 'per_task.jsonl')]
+    E = [r for r in R if 'skip' not in r]
+    res = {'n_tasks': len(R), 'n_eval': len(E)}
+    # ---------------- dataset stats
+    T = [json.loads(l) for l in open(ROOT / 'data' / 'tasks.jsonl')]
+    G = [json.loads(l) for l in open(ROOT / 'data' / 'gold.jsonl')]
+    repos = defaultdict(int)
+    for t in T: repos[t['repo']] += 1
+    res['repos'] = dict(repos)
+    gt = [t for r in E for t in r['gold_file_tokens']]
+    gl = [t for r in E for t in r['gold_file_lines']]
+    gu = [t for r in E for t in r['gold_unit_tokens']]
+    nf = [len(r['gold_files']) for r in E]
+    res['stats'] = {
+        'gold_files_total': len(gt), 'gold_files_per_task_mean': float(np.mean(nf)), 'single_file_tasks': int(sum(n == 1 for n in nf)),
+        'max_gold_files': int(max(nf)),
+        'gold_file_tokens_median': float(np.median(gt)), 'gold_file_tokens_p90': float(np.percentile(gt, 90)),
+        'gold_file_tokens_max': int(max(gt)),
+        'gold_files_over_32k': int(sum(t > 32768 for t in gt)), 'gold_files_over_16k': int(sum(t > 16384 for t in gt)),
+        'gold_files_over_150_lines_frac': float(np.mean([l > 150 for l in gl])),
+        'gold_file_lines_median': float(np.median(gl)),
+        'gold_unit_tokens_median': float(np.median(gu)), 'gold_unit_tokens_p90': float(np.percentile(gu, 90)),
+        'gold_units_per_task_mean': float(np.mean([len(r['gold_units']) for r in E])),
+        'gold_units_module_level_frac': float(np.mean([u[1] == '<module>' for r in E for u in r['gold_units']])),
+        'tasks_with_new_files': int(sum(bool(r['new_files']) for r in R)),
+        'tasks_only_new_files': int(sum('skip' in r for r in R)),
+        'statement_words_median': float(np.median([r['statement_words'] for r in R])),
+        'statements_le20_words': int(sum(r['statement_words'] <= 20 for r in R)),
+        'mentions_gold_file_frac': float(np.mean([r['mentions_gold_file'] for r in E])),
+        'mentions_gold_unit_frac': float(np.mean([r['mentions_gold_unit'] for r in E])),
+        'hints_nonempty': int(sum(bool(t['hints_text'].strip()) for t in T)),
+        'created_min': min(t['created_at'] for t in T), 'created_max': max(t['created_at'] for t in T),
+        'chars_per_token_pooled': float(sum(r['repo_chars'] for r in E) / sum(r['repo_tokens'] for r in E)),
+        'gold_func_tokens_median': float(np.median([d[2] for r in E for d in r['gold_units_detail'] if d[1] != '<module>'])),
+        'gold_func_tokens_p90': float(np.percentile([d[2] for r in E for d in r['gold_units_detail'] if d[1] != '<module>'], 90)),
+        'n_gold_funcs': int(sum(1 for r in E for d in r['gold_units_detail'] if d[1] != '<module>')),
+        'fastapi_skeleton_over_32k': int(sum(r['repo_skeleton_tokens'] > 32768 for r in E if r['repo'] == 'fastapi/fastapi')),
+        'fastapi_docs_src_median': float(np.median([r['n_docs_src'] for r in E if r['repo'] == 'fastapi/fastapi'])),
+        'link_only_statements': int(sum(1 for t in T if 'github.com' in t['problem_statement'] and len(t['problem_statement'].split()) <= 25)),
+    }
+    per_repo = {}
+    for repo in sorted(set(r['repo'] for r in E)):
+        sub = [r for r in E if r['repo'] == repo]
+        per_repo[repo] = {'n_tasks': len(sub)}
+        for k in ['repo_tokens', 'repo_skeleton_tokens', 'n_corpus_files', 'n_corpus_units']:
+            v = [r[k] for r in sub]
+            per_repo[repo][k] = [int(min(v)), int(np.median(v)), int(max(v))]
+    res['per_repo_corpus'] = per_repo
+    # ---------------- main table
+    methods = ['random', 'size_prior', 'recency', 'ident', 'grep', 'bm25_file', 'bm25_func', 'bm25_func+graph',
+               'hybrid_lex', 'hybrid_lex+recency', 'hybrid+graph', 'bm25_file@scoped', 'bm25_func@scoped', 'recency@scoped',
+               'hybrid_lex@scoped', 'hybrid_lex+recency@scoped', 'hybrid+graph@scoped']
+    cols = ['hit@1', 'hit@3', 'hit@5', 'hit@10', 'recall@5', 'all@5', 'mrr']
+    tab = {}
+    for m in methods:
+        tab[m] = {}
+        for c in cols:
+            v = [r['metrics'][m].get(c) for r in E]
+            if v[0] is None: continue
+            tab[m][c] = ci(v) if m != 'random' else (float(np.mean(v)), None, None)
+    res['main'] = tab
+    ladder = [('bm25_file', 'BM25 over whole files'), ('bm25_func', '+ function-level units (MaxP)'),
+              ('bm25_func@scoped', '+ soft library scope'), ('hybrid_lex@scoped', '+ identifier & grep (RRF)'),
+              ('hybrid_lex+recency@scoped', '+ git recency'), ('hybrid+graph@scoped', '+ graph boost')]
+    res['ladder'] = []
+    prev = None
+    for m, lab in ladder:
+        row = {'method': m, 'label': lab, **{c: ci([r['metrics'][m][c] for r in E]) for c in ['hit@1', 'hit@5', 'hit@10', 'mrr']}}
+        if prev:
+            row['vs_prev_hit5'] = paired([r['metrics'][m]['hit@5'] for r in E], [r['metrics'][prev]['hit@5'] for r in E])
+            row['vs_prev_hit10'] = paired([r['metrics'][m]['hit@10'] for r in E], [r['metrics'][prev]['hit@10'] for r in E])
+        row['vs_bm25_file_hit5'] = paired([r['metrics'][m]['hit@5'] for r in E], [r['metrics']['bm25_file']['hit@5'] for r in E])
+        res['ladder'].append(row); prev = m
+    res['paired'] = {}
+    for a, b in [('hybrid+graph', 'bm25_file'), ('hybrid+graph', 'bm25_func'), ('bm25_func', 'bm25_file'),
+                 ('hybrid_lex+recency', 'hybrid_lex'), ('hybrid+graph', 'hybrid_lex+recency'), ('bm25_func+graph', 'bm25_func')]:
+        for c in ['hit@1', 'hit@5', 'hit@10']:
+            res['paired'][f'{a} vs {b} {c}'] = paired([r['metrics'][a][c] for r in E], [r['metrics'][b][c] for r in E])
+    # ---------------- per-repo
+    res['by_repo'] = {}
+    for repo in sorted(set(r['repo'] for r in E)):
+        sub = [r for r in E if r['repo'] == repo]
+        res['by_repo'][repo] = {m: {c: float(np.mean([r['metrics'][m][c] for r in sub])) for c in ['hit@1', 'hit@5', 'mrr']}
+                                for m in ['bm25_file', 'bm25_func', 'bm25_func@scoped', 'recency', 'hybrid_lex@scoped', 'hybrid+graph']}
+        res['by_repo'][repo]['n'] = len(sub)
+        if len(sub) >= 10:
+            res['by_repo'][repo]['paired_hit5_vs_bm25_file'] = paired([r['metrics']['hybrid+graph']['hit@5'] for r in sub],
+                                                                      [r['metrics']['bm25_file']['hit@5'] for r in sub])
+    # ---------------- strata
+    def strat(name, pred):
+        a = [r for r in E if pred(r)]; b = [r for r in E if not pred(r)]
+        out = {}
+        for lab, sub in [('yes', a), ('no', b)]:
+            out[lab] = {'n': len(sub), **{m: float(np.mean([r['metrics'][m]['hit@5'] for r in sub])) if sub else None
+                                          for m in ['bm25_file', 'bm25_func', 'bm25_func@scoped', 'recency', 'hybrid+graph']}}
+        res.setdefault('strata', {})[name] = out
+    strat('statement<=20 words', lambda r: r['statement_words'] <= 20)
+    strat('mentions gold file/function', lambda r: r['mentions_gold_file'] or r['mentions_gold_unit'])
+    strat('multi-file gold', lambda r: len(r['gold_files']) > 1)
+    created = {t['instance_id']: t['created_at'] for t in T}
+    strat('created >= 2025-07', lambda r: created[r['instance_id']] >= '2025-07')
+    # ---------------- budgets
+    strategies = {'file:bm25_file': 'Whole files, BM25 order', 'file:hybrid': 'Whole files, hybrid order',
+                  'unit:bm25': 'Functions, BM25 order', 'unit:2stage': 'Functions, two-stage (ours)',
+                  'skel5+unit:hybrid': 'Skeleton(top-5) + functions', 'unit:bm25@scoped': 'Functions, BM25, scoped',
+                  'unit:2stage@scoped': 'Functions, two-stage, scoped', 'file:bm25_file@scoped': 'Whole files, BM25, scoped',
+                  'unit:hybrid': 'Functions, heuristic fusion'}
+    res['budget'] = {}
+    for s in strategies:
+        res['budget'][s] = {}
+        for ax in ['tokens', 'calls']:
+            res['budget'][s][ax] = {k: {'file_recall': ci([r['budget'][s][ax][k][0] for r in E]),
+                                        'unit_recall': ci([r['budget'][s][ax][k][1] for r in E])}
+                                    for k in E[0]['budget'][s][ax]}
+    res['budget_paired_8k_2stage_vs_bm25unit'] = paired([r['budget']['unit:2stage']['tokens']['8000'][0] for r in E],
+                                                       [r['budget']['unit:bm25']['tokens']['8000'][0] for r in E])
+    res['budget_paired_8k'] = paired([r['budget']['unit:2stage']['tokens']['8000'][0] for r in E],
+                                     [r['budget']['file:bm25_file']['tokens']['8000'][0] for r in E])
+    # ---------------- ablations
+    A = json.load(open(OUT / 'ablations.json'))
+    res['ablations'] = {k: {c: float(np.mean([x[c] for x in v])) for c in ['hit@1', 'hit@5', 'hit@10', 'mrr']}
+                        for k, v in A.items()}
+    rg = [res['ablations'][f'rec hl={hl} n={n}']['hit@5'] for hl in [5, 10, 25, 50, 100] for n in [50, 100, 300, 1000]]
+    res['recency_grid_hit5_range'] = [min(rg), max(rg)]
+    # ---------------- failure analysis: tasks where hybrid+graph misses at 10
+    res['loc32k_verify'] = json.load(open(OUT / 'loc32k_verify.json'))
+    v = res['loc32k_verify']
+    res['loc32k_summary'] = {'top10_identical': float(np.mean([o['top10_identical'] for o in v])), 'n': len(v),
+                             'sec_median': float(np.median([o['seconds'] for o in v])), 'sec_max': float(max(o['seconds'] for o in v)),
+                             'hit5': float(np.mean([o['hit5'] for o in v])), 'hit10': float(np.mean([o['hit10'] for o in v]))}
+    res['misses@10'] = [{'id': r['instance_id'], 'words': r['statement_words'], 'gold': r['gold_files'],
+                         'top3': r['ranks_top20']['hybrid+graph'][:3]} for r in E if r['metrics']['hybrid+graph']['hit@10'] == 0]
+    json.dump(res, open(OUT / 'results.json', 'w'), indent=1)
+
+    # ================= figures
+    # Fig 1: Hit@k curves
+    fig, ax = plt.subplots(figsize=(5.2, 3.3))
+    show = [('hybrid+graph', 'Loc32K: hybrid + graph'), ('bm25_func@scoped', 'BM25 functions + scope'),
+            ('bm25_func', 'BM25, function-level'), ('bm25_file', 'BM25, file-level'), ('recency', 'Git recency (query-free)')]
+    ks = list(range(1, 21))
+    for i, (m, lab) in enumerate(show):
+        ys = [np.mean([(min([r['ranks_top20'][m].index(g) + 1 for g in r['gold_files'] if g in r['ranks_top20'][m]] or [99]) <= k)
+                       for r in E]) for k in ks]
+        ax.plot(ks, ys, color=SER[i], lw=2, marker='o', ms=3.5, label=lab)
+    N = [r['n_corpus_files'] for r in E]
+    rnd = [np.mean([1 - math.comb(n - len(r['gold_files']), k) / math.comb(n, k) for r, n in zip(E, N)]) for k in ks]
+    ax.plot(ks, rnd, color=INK2, lw=1.2, ls='--', label='Random')
+    ax.set_xlabel('k (files inspected)'); ax.set_ylabel('Hit@k (≥1 gold file in top-k)')
+    ax.set_xlim(1, 20); ax.set_ylim(0, 1); ax.set_xticks([1, 3, 5, 10, 15, 20])
+    ax.legend(loc='lower right', fontsize=7.5, bbox_to_anchor=(1.0, 0.22))
+    fig.subplots_adjust(right=0.97, left=0.11, bottom=0.14, top=0.96)
+    fig.savefig(OUT / 'fig1_hit_at_k.png', dpi=200); plt.close(fig)
+
+    # Fig 2: budget curves (tokens and calls)
+    fig, axs = plt.subplots(1, 2, figsize=(7.4, 3.1), sharey=True)
+    order = ['unit:2stage', 'unit:bm25', 'skel5+unit:hybrid', 'file:bm25_file', 'file:hybrid']
+    for ax, axn, xl in [(axs[0], 'tokens', 'Context budget (Gemma tokens, log scale)'), (axs[1], 'calls', 'read_file calls (150 lines each)')]:
+        for i, s in enumerate(order):
+            ks_ = list(res['budget'][s][axn].keys()); xs = [int(k) for k in ks_]
+            ys = [res['budget'][s][axn][k]['file_recall'][0] for k in ks_]
+            lo = [res['budget'][s][axn][k]['file_recall'][1] for k in ks_]
+            hi = [res['budget'][s][axn][k]['file_recall'][2] for k in ks_]
+            ax.plot(xs, ys, color=SER[i], lw=2, marker='o', ms=3.5, label=strategies[s])
+            ax.fill_between(xs, lo, hi, color=SER[i], alpha=0.10, lw=0)
+        ax.set_xscale('log'); ax.set_xlabel(xl)
+        ax.set_xticks(xs); ax.set_xticklabels([f'{x//1000}k' if axn == 'tokens' else str(x) for x in xs])
+        ax.minorticks_off()
+    axs[0].set_ylabel('Gold-file recall'); axs[0].set_ylim(0, 1)
+    axs[0].axvline(32768, color=INK2, lw=0.8, ls=':'); axs[0].text(30000, 0.95, 'whole window', ha='right', fontsize=7, color=INK2)
+    h, l = axs[0].get_legend_handles_labels()
+    fig.legend(h, l, loc='upper center', ncol=3, fontsize=7.5, bbox_to_anchor=(0.5, 1.0))
+    fig.subplots_adjust(top=0.80, bottom=0.17, left=0.08, right=0.98, wspace=0.08)
+    fig.savefig(OUT / 'fig2_budget.png', dpi=200); plt.close(fig)
+
+    # Fig 3: size distribution of gold files vs window
+    fig, ax = plt.subplots(figsize=(5.2, 2.6))
+    bins = np.logspace(np.log10(50), np.log10(max(gt) * 1.2), 30)
+    ax.hist(gu, bins=bins, color=SER[0], histtype='step', lw=2, label=f'Edited units (functions / module rest), n={len(gu)}')
+    ax.hist(gt, bins=bins, color=SER[1], histtype='step', lw=2, label=f'Edited files (whole), n={len(gt)}')
+    ax.axvline(32768, color=INK, lw=1, ls='--'); ax.text(33500, ax.get_ylim()[1] * 0.85, '32K context', fontsize=7.5, color=INK)
+    ax.set_xscale('log'); ax.set_xlabel('Gemma tokens'); ax.set_ylabel('Count')
+    ax.legend(fontsize=7.5, loc='upper left')
+    fig.subplots_adjust(left=0.1, bottom=0.18, right=0.97, top=0.95)
+    fig.savefig(OUT / 'fig3_sizes.png', dpi=200); plt.close(fig)
+    print(json.dumps({k: res[k] for k in ['stats', 'per_repo_corpus']}, indent=1))
+
+
+if __name__ == '__main__':
+    main()
+
+
+##### [code 8]
+%%writefile src/verify_loc32k.py
+"""Check that the stdlib-only loc32k.py reproduces the reference hybrid+graph ranking on real checkouts."""
+import json, subprocess, sys, time, shutil, importlib.util, tempfile
+from pathlib import Path
+ROOT = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location('loc32k', ROOT / 'loc32k' / 'loc32k.py'); L = importlib.util.module_from_spec(spec); spec.loader.exec_module(L)
+REPO_DIR = {'fastapi/fastapi': 'fastapi_fastapi', 'Textualize/rich': 'Textualize_rich', 'psf/requests': 'psf_requests', 'encode/httpx': 'encode_httpx'}
+tasks = {json.loads(l)['instance_id']: json.loads(l) for l in open(ROOT / 'data' / 'tasks.jsonl')}
+ref = {r['instance_id']: r for r in map(json.loads, open(ROOT / 'out' / 'per_task.jsonl')) if 'skip' not in r}
+out = []
+for iid, r in ref.items():
+    t = tasks[iid]; repo = ROOT / 'repos' / REPO_DIR[t['repo']]; wt = Path(tempfile.gettempdir()) / 'loc32k_wt'
+    if wt.exists(): subprocess.run(['git', '-C', str(repo), 'worktree', 'remove', '--force', str(wt)], capture_output=True); shutil.rmtree(wt, ignore_errors=True)
+    subprocess.run(['git', '-C', str(repo), 'worktree', 'prune'], capture_output=True)
+    subprocess.run(['git', '-C', str(repo), 'worktree', 'add', '-q', '--detach', str(wt), t['base_commit']], check=True, capture_output=True)
+    t0 = time.time(); files, units, _ = L.localize(str(wt), t['problem_statement']); dt = time.time() - t0
+    a, b = files[:20], r['ranks_top20']['hybrid+graph']
+    gold = r['gold_files']
+    hit5 = any(g in files[:5] for g in gold); hit10 = any(g in files[:10] for g in gold)
+    out.append({'id': iid, 'top10_identical': a[:10] == b[:10], 'top5_identical': a[:5] == b[:5], 'overlap10': len(set(a[:10]) & set(b[:10])),
+                'hit5': hit5, 'hit10': hit10, 'seconds': dt})
+    print(iid, out[-1], flush=True)
+subprocess.run(['git', '-C', str(repo), 'worktree', 'remove', '--force', str(wt)], capture_output=True)
+json.dump(out, open(ROOT / 'out' / 'loc32k_verify.json', 'w'), indent=0)
+import numpy as np
+print('identical top5', np.mean([o['top5_identical'] for o in out]), 'top10', np.mean([o['top10_identical'] for o in out]),
+      'overlap10', np.mean([o['overlap10'] for o in out]), 'hit5', np.mean([o['hit5'] for o in out]), 'hit10', np.mean([o['hit10'] for o in out]),
+      'sec median', np.median([o['seconds'] for o in out]), 'max', max(o['seconds'] for o in out))
+
+
+##### [code 9]
+%%writefile loc32k/loc32k.py
+#!/usr/bin/env python3
+"""loc32k - zero-dependency fault localizer for small-context coding agents.
+
+Runs inside an offline sandbox with only the Python stdlib and git. Ranks the
+repository's library files and functions for a task description, using
+  * BM25 over function-level units (file score = best unit),
+  * exact identifier hits (definitions / module names mentioned in the task),
+  * grep-style substring hits, IDF-weighted,
+  * git recency of the history *before* the current commit,
+fused with reciprocal-rank fusion (k=60) plus a one-hop import/call-graph boost.
+
+Usage
+  python3 loc32k.py --root /workspace --query-file /tmp/task.txt            # ranked files + functions
+  python3 loc32k.py --root /workspace --query-file /tmp/task.txt --show 3   # print code of unit #3
+Output is kept under --max-chars (default 4800) to fit tool-output caps.
+"""
+import argparse, ast, math, os, re, subprocess, sys
+from collections import defaultdict
+
+AUX = {'docs', 'doc', 'docs_src', 'examples', 'example', 'benchmarks', 'benchmark', 'scripts', 'tools'}
+STOP = set('''a an the of to in on for and or is are be by with as at from this that it its not no if else elif
+return def class self cls import none true false pass raise try except finally while yield lambda async await we our
+you your can should would will just also use used using add fix fixes fixed support pr pull request issue issues https
+http github com www when then than into out so do does there here which what new make one all any but have has was
+were been more most some such only other see e g i ie eg etc via str int bool dict list type value'''.split())
+CAMEL = re.compile(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+')
+IDENT_PATTERNS = [r'`([^`\n]{2,80})`', r'\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\b', r'\b([A-Z][a-z0-9]+(?:[A-Z][a-z0-9]*)+)\b',
+                  r'\b([a-z0-9]+(?:_[a-z0-9]+)+)\b', r'\b(\w+\.py)\b']
+
+
+def is_test(p):
+    parts = p.split('/'); n = parts[-1]
+    return n.startswith('test_') or n.endswith('_test.py') or n == 'conftest.py' or any(x in ('tests', 'test', 'testing') for x in parts[:-1])
+
+
+def toks(text):
+    out = []
+    for raw in re.findall(r'[A-Za-z_][A-Za-z0-9_]*', text):
+        low = raw.lower()
+        if ('_' in raw or re.search(r'[a-z][A-Z]', raw)) and low not in STOP:
+            out.append(low)
+        for p in re.split(r'[_\W]+', raw):
+            for x in CAMEL.findall(p) if p else []:
+                x = x.lower()
+                if len(x) > 1 and x not in STOP:
+                    out.append(x)
+    return out
+
+
+def idents(s):
+    found = set()
+    for pat in IDENT_PATTERNS:
+        for m in re.findall(pat, s):
+            for piece in re.findall(r'[A-Za-z_][A-Za-z0-9_]*', m):
+                if len(piece) > 2 and piece.lower() not in STOP:
+                    found.add(piece)
+    return found
+
+
+class BM25:  # same formulation as rank_bm25.BM25Okapi (k1=1.5, b=0.75, eps=0.25)
+    def __init__(self, docs, k1=1.5, b=0.75, eps=0.25):
+        self.k1, self.b = k1, b
+        self.tf = []; df = defaultdict(int); self.dl = []
+        for d in docs:
+            c = defaultdict(int)
+            for w in d: c[w] += 1
+            self.tf.append(c); self.dl.append(len(d))
+            for w in c: df[w] += 1
+        n = len(docs); self.avg = sum(self.dl) / max(n, 1)
+        self.idf = {}; neg = []; tot = 0.0
+        for w, f in df.items():
+            v = math.log(n - f + 0.5) - math.log(f + 0.5)
+            self.idf[w] = v; tot += v
+            if v < 0: neg.append(w)
+        e = eps * tot / max(len(self.idf), 1)
+        for w in neg: self.idf[w] = e
+
+    def scores(self, q):
+        out = [0.0] * len(self.tf)
+        for w in q:
+            idf = self.idf.get(w)
+            if idf is None: continue
+            for i, c in enumerate(self.tf):
+                f = c.get(w)
+                if f:
+                    out[i] += idf * (f * (self.k1 + 1) / (f + self.k1 * (1 - self.b + self.b * self.dl[i] / self.avg)))
+        return out
+
+
+def spans(src):
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    res = []
+
+    def visit(node, prefix):
+        for ch in ast.iter_child_nodes(node):
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                q = f'{prefix}.{ch.name}' if prefix else ch.name
+                s = min([ch.lineno] + [d.lineno for d in ch.decorator_list])
+                res.append((q, 'class' if isinstance(ch, ast.ClassDef) else 'func', s, ch.end_lineno))
+                visit(ch, q)
+            else:
+                visit(ch, prefix)
+    visit(tree, '')
+    return res
+
+
+def load(root):
+    out = subprocess.run(['git', '-C', root, 'ls-files', '*.py'], capture_output=True, text=True).stdout.split()
+    if not out:
+        out = [os.path.relpath(os.path.join(d, f), root) for d, _, fs in os.walk(root) for f in fs if f.endswith('.py')]
+    files = sorted(p for p in out if not is_test(p) and '/.' not in '/' + p)
+    src = {}
+    for p in files:
+        try:
+            src[p] = open(os.path.join(root, p), encoding='utf-8', errors='replace').read()
+        except OSError:
+            pass
+    return [p for p in files if p in src], src
+
+
+def recency(root, files, n=300, hl=25):
+    out = subprocess.run(['git', '-C', root, 'log', '-n', str(n), '--name-only', '--format=@@%H'], capture_output=True, text=True).stdout
+    sc = defaultdict(float)
+    # (the harness's single "baseline" commit on top only shifts every age by one: ranking unchanged)
+    for age, block in enumerate(out.split('@@')[1:]):
+        for f in [l for l in block.strip().split('\n')[1:] if l.strip()]:
+            sc[f] += 0.5 ** (age / hl)
+    return [sc.get(p, 0.0) for p in files]
+
+
+def graph(files, src, defs_by_name):
+    mod = {}
+    for p in files:
+        m = p[:-3].replace('/', '.'); m = m[:-9] if m.endswith('.__init__') else m
+        mod[m] = p
+    und = defaultdict(set)
+    for p in files:
+        try:
+            tree = ast.parse(src[p])
+        except SyntaxError:
+            continue
+        pkg = p[:-3].replace('/', '.').rsplit('.', 1)[0]; names = set(); nb = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name in mod: nb.add(mod[a.name])
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ''
+                if node.level:
+                    parts = pkg.split('.')
+                    up = parts[:len(parts) - (node.level - 1)] if node.level > 1 else parts
+                    base = '.'.join(up + ([node.module] if node.module else []))
+                if base in mod: nb.add(mod[base])
+                for a in node.names:
+                    if f'{base}.{a.name}' in mod: nb.add(mod[f'{base}.{a.name}'])
+            elif isinstance(node, ast.Call):
+                f = node.func
+                nm = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+                if nm: names.add(nm.lower())
+        for nm in names:
+            d = defs_by_name.get(nm, ())
+            if 0 < len(d) <= 3: nb |= set(d)
+        for q in nb:
+            if q != p: und[p].add(q); und[q].add(p)
+    return und
+
+
+def rrf(rankings, k=60):
+    sc = defaultdict(float)
+    for r in rankings:
+        for i, f in enumerate(r): sc[f] += 1.0 / (k + i + 1)
+    return sorted(sc, key=lambda f: -sc[f])
+
+
+def localize(root, query):
+    files, src = load(root)
+    fidx = {p: i for i, p in enumerate(files)}
+    units = []; defs_by_name = defaultdict(set)
+    for p in files:
+        lines = src[p].split('\n'); sp = spans(src[p]); covered = [False] * (len(lines) + 2)
+        funcs = {q for q, k, _, _ in sp if k == 'func'}
+        for q, k, a, b in sp:
+            defs_by_name[q.split('.')[-1].lower()].add(p)
+        for q, k, a, b in sp:
+            if k == 'func' and not ('.' in q and q.rsplit('.', 1)[0] in funcs):
+                units.append((p, q, a, b, '\n'.join(lines[a - 1:b])))
+                for i in range(a, b + 1): covered[i] = True
+        units.append((p, '<module>', 1, len(lines), '\n'.join(l for i, l in enumerate(lines, 1) if not covered[i])))
+    query = re.sub(r'https?://\S+', ' ', re.sub(r'<!--.*?-->', ' ', query, flags=re.S))
+    q = toks(query)
+    ids = idents(query)
+    us = BM25([toks(u[0].replace('/', ' ') + ' ' + u[1] + ' ' + u[4]) for u in units]).scores(q) if q else [0.0] * len(units)
+    fs = [0.0] * len(files)
+    for u, s in zip(units, us): fs[fidx[u[0]]] = max(fs[fidx[u[0]]], s)
+    n = len(files)
+    ident = [0.0] * n; grep = [0.0] * n
+    for w in ids:
+        low = w.lower(); hits = set(defs_by_name.get(low, ()))
+        hits |= {p for p in files if os.path.basename(p)[:-3].lower() == low or low in p.lower().replace('/', '.').split('.')}
+        for p in hits: ident[fidx[p]] += math.log(1 + n / len(hits))
+        if len(w) >= 4:
+            gh = [i for i, p in enumerate(files) if w in src[p]]
+            if gh and len(gh) < n * 0.5:
+                for i in gh: grep[i] += math.log(1 + n / len(gh))
+    rec = recency(root, files)
+
+    def order(v, positive=False):
+        o = sorted(range(n), key=lambda i: -v[i])
+        return [files[i] for i in o if (v[i] > 0 or not positive)]
+    bm = order(fs)
+    fused = rrf([bm, order(ident, True), order(grep, True), order(rec, True)])
+    fused += [f for f in bm if f not in set(fused)]
+    s = [0.0] * n
+    for i, f in enumerate(fused): s[fidx[f]] = 1.0 / (61 + i)
+    mx = max(s) or 1.0; s = [x / mx for x in s]
+    g = graph(files, src, defs_by_name)
+    boost = [0.0] * n
+    for i in sorted(range(n), key=lambda i: -s[i])[:5]:
+        for nb in g.get(files[i], ()):
+            j = fidx.get(nb)
+            if j is not None: boost[j] = max(boost[j], s[i])
+    final = [s[i] + 0.3 * boost[i] for i in range(n)]
+    ranked = sorted(range(n), key=lambda i: -final[i])
+    ranked_files = [files[i] for i in ranked]
+    # two-stage unit ranking: units of the top-10 files by unit BM25, then the rest
+    top10 = set(ranked_files[:10]); mu = max(us) if us and max(us) > 0 else 1.0
+    uorder = sorted(range(len(units)), key=lambda i: -(us[i] / mu + (2.0 if units[i][0] in top10 else 0.0)))
+    return ranked_files, [units[i] for i in uorder], src
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--root', default='/workspace'); ap.add_argument('--query'); ap.add_argument('--query-file')
+    ap.add_argument('--k', type=int, default=10); ap.add_argument('--units', type=int, default=25)
+    ap.add_argument('--show', type=int, default=None); ap.add_argument('--max-chars', type=int, default=4800)
+    a = ap.parse_args()
+    query = a.query or (open(a.query_file).read() if a.query_file else sys.stdin.read())
+    files, units, src = localize(a.root, query)
+    if a.show is not None:
+        u = [x for x in units if x[1] != '<module>'][a.show]
+        body = '\n'.join(f'{a_}: {l}' for a_, l in enumerate(u[4].split('\n'), u[2]))
+        print(f'# {u[0]}::{u[1]} lines {u[2]}-{u[3]}\n' + body[:a.max_chars - 80]); return
+    out = ['TOP FILES (most likely to edit first):']
+    for i, f in enumerate(files[:a.k]):
+        out.append(f'{i+1}. {f} ({src[f].count(chr(10)) + 1} lines)')
+    out.append('TOP FUNCTIONS (#: path::name lines; read with read_file(path, start, end) or --show #):')
+    j = 0
+    for u in units:
+        if u[1] == '<module>': continue
+        if j >= a.units: break
+        out.append(f'{j}: {u[0]}::{u[1]} {u[2]}-{u[3]}'); j += 1
+    text = '\n'.join(out)
+    print(text[:a.max_chars])
+
+
+if __name__ == '__main__':
+    main()
+
+
+##### [code 10]
+%%writefile src/report.py
+import json,sys,numpy as np
+from collections import defaultdict
+R=[json.loads(l) for l in open(sys.argv[1] if len(sys.argv)>1 else 'out/per_task.jsonl')]
+E=[r for r in R if 'skip' not in r]
+print('tasks',len(R),'eval',len(E))
+ms=list(E[0]['metrics'].keys())
+print(f"{'method':24s}"+''.join(f'{c:>10s}' for c in ['hit@1','hit@3','hit@5','hit@10','recall@5','all@5','mrr']))
+for m in ms:
+    row=[]
+    for c in ['hit@1','hit@3','hit@5','hit@10','recall@5','all@5','mrr']:
+        v=[r['metrics'][m].get(c,np.nan) for r in E]; row.append(np.nanmean(v))
+    print(f'{m:24s}'+''.join(f'{x:10.3f}' for x in row))
+
+
+##### [code 11]
+!python src/annotate.py && python src/evaluate.py > out/eval.log && tail -1 out/eval.log
+!python src/ablate.py > out/ablate.log && python src/verify_loc32k.py > out/verify.log && tail -1 out/verify.log
+!python src/analysis.py > /dev/null && python src/report.py
+
+##### [code 12]
+from IPython.display import Image, display
+for f in ['out/fig1_hit_at_k.png','out/fig2_budget.png','out/fig3_sizes.png']: display(Image(f))
+
+##### [code 13]
+import json; r = json.load(open('out/results.json'))
+for row in r['ladder']: print(f"{row['label']:34s} hit@5={row['hit@5'][0]:.3f}  hit@10={row['hit@10'][0]:.3f}  mrr={row['mrr'][0]:.3f}")
+print(r['loc32k_summary'])
+
+##### [code 14]
+import shutil, os
+os.makedirs('/kaggle/working/results', exist_ok=True)
+for f in ['results.json','ablations.json','loc32k_verify.json','fig1_hit_at_k.png','fig2_budget.png','fig3_sizes.png']:
+    shutil.copy('/tmp/loc32k_paper/out/'+f, '/kaggle/working/results/'+f)
+print(os.listdir('/kaggle/working/results'))

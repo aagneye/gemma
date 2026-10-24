@@ -1,0 +1,608 @@
+{
+ "train_s0": {
+  "outcomes": {
+   "fail_timeout": 57,
+   "fail_tests": 12,
+   "resolved": 10,
+   "fail_no_patch": 2
+  },
+  "by_repo": {
+   "fastapi/fastapi": [
+    9,
+    67
+   ],
+   "psf/requests": [
+    1,
+    13
+   ],
+   "encode/httpx": [
+    0,
+    1
+   ]
+  }
+ },
+ "train_s1": {
+  "outcomes": {
+   "fail_timeout": 50,
+   "fail_tests": 17,
+   "resolved": 12,
+   "fail_no_patch": 2
+  },
+  "by_repo": {
+   "fastapi/fastapi": [
+    11,
+    67
+   ],
+   "psf/requests": [
+    1,
+    13
+   ],
+   "encode/httpx": [
+    0,
+    1
+   ]
+  }
+ },
+ "val_base": {
+  "outcomes": {
+   "fail_timeout": 33,
+   "resolved": 13,
+   "fail_tests": 2
+  },
+  "by_repo": {
+   "Textualize/rich": [
+    13,
+    48
+   ]
+  }
+ },
+ "val_base_c2": {
+  "outcomes": {
+   "fail_tests": 11,
+   "resolved": 14,
+   "fail_no_patch": 4,
+   "fail_timeout": 19
+  },
+  "by_repo": {
+   "Textualize/rich": [
+    14,
+    48
+   ]
+  },
+  "resolved_durations_s": [
+   111,
+   144,
+   163,
+   170,
+   181,
+   197,
+   206,
+   210,
+   273,
+   318,
+   340,
+   383,
+   484,
+   485
+  ],
+  "median_tool_calls": 26,
+  "sessions": [
+   {
+    "s": 473,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 181,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 307,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 709,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 408,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 483,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 210,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 485,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 144,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 273,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 197,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 485,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 306,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 318,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 453,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 723,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 243,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 273,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 291,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 111,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 483,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 485,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 373,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 383,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 415,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 457,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 485,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 278,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 170,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 484,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 484,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 486,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 340,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 206,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 163,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 452,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 301,
+    "resolved": false,
+    "timeout": false
+   }
+  ]
+ },
+ "val_graph_c2": {
+  "outcomes": {
+   "fail_tests": 15,
+   "resolved": 13,
+   "fail_no_patch": 6,
+   "fail_timeout": 14
+  },
+  "by_repo": {
+   "Textualize/rich": [
+    13,
+    48
+   ]
+  },
+  "resolved_durations_s": [
+   60,
+   95,
+   112,
+   120,
+   141,
+   187,
+   191,
+   196,
+   202,
+   248,
+   290,
+   467,
+   484
+  ],
+  "median_tool_calls": 21,
+  "sessions": [
+   {
+    "s": 228,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 202,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 399,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 431,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 538,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 95,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 405,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 395,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 484,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 381,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 248,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 321,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 60,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 460,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 426,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 191,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 482,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 484,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 625,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 144,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 100,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 230,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 112,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 454,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 484,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 253,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 120,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 380,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 345,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 441,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 141,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 483,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 481,
+    "resolved": false,
+    "timeout": true
+   },
+   {
+    "s": 449,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 290,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 187,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 196,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 474,
+    "resolved": false,
+    "timeout": false
+   },
+   {
+    "s": 467,
+    "resolved": true,
+    "timeout": false
+   },
+   {
+    "s": 279,
+    "resolved": false,
+    "timeout": false
+   }
+  ]
+ },
+ "paired_graph_vs_a1": {
+  "graph_gained": 1,
+  "graph_lost": 2
+ }
+}

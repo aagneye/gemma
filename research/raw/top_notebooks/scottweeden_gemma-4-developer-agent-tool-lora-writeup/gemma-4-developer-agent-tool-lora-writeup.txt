@@ -1,0 +1,312 @@
+
+##### [markdown 0]
+# Gemma 4 Developer Agent: rebuilding a tool-use LoRA, and where the time actually goes
+
+This notebook is a write-up and a submission builder. It covers four things:
+- **Rebuilding a lost tool-use LoRA** for `gemma-4-31b-it-qat-w4a16-ct` from a surviving recipe, on the competition's own hardware (one Kaggle 4x L4 session for sampling, one for training).
+- **What the 4x L4 machine does to an agent's wall-clock budget**, measured in the real `swegemma` harness.
+- **Whether a "use the code graph first" prompt helps.** It doesn't.
+- **A `submission.zip`** built from the measured best bundle.
+
+| | |
+|---|---|
+| Best bundle on the held-out rich fold | **A1**: 14/48 resolved (29%), with 2 tasks at a time on 4x L4 |
+| Graph-first prompt | 13/48: faster (21 vs 26 median tool calls, 14 vs 19 timeouts) but 4 more test failures |
+| Effect of concurrency | 8 tasks sharing vLLM: 13/48 and 33 session timeouts. 2 tasks: 14/48 and 19 timeouts. The KV cache holds about 1.4 full-length sequences |
+| The 12-hour budget | A1's measured durations put an 8-minute cap at about 12.4 to 14.2 h for ~120 sequential tasks, so this bundle caps sessions at **6 minutes** |
+| LoRA | r=16 on all 410 projections, trained on 83 of the model's own resolved turns (14 tasks). It fits 16k context on L4 with query-chunked attention. Loss 0.17 → 0.11; held-out tool agreement 0.990 → 0.985. **Its resolve-rate run is pending** (GPU quota) |
+
+**Inputs:**
+- the dataset [Gemma 4 Developer Agent Tool-Use LoRA Kit](https://www.kaggle.com/datasets/scottweeden/gemma-4-developer-agent-tool-lora-kit): bundles, recipe, scripts, evidence;
+- the model [Gemma 4 31B SWE Tool-Use LoRA](https://www.kaggle.com/models/scottweeden/gemma-4-31b-swe-tool-use-lora): the adapter;
+- the competition data.
+
+Everything here runs on CPU in about a minute. The GPU work happened in the scripts under `scripts/`, and their aggregate results are in `evidence/`.
+
+##### [code 1]
+import hashlib, json, math, os, shutil, struct, subprocess, sys, zipfile
+from pathlib import Path
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from IPython.display import Markdown, display
+
+INPUT = Path("/kaggle/input")
+WORK = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path("kaggle_working")
+WORK.mkdir(parents=True, exist_ok=True)
+DS = next((p.parent.parent for p in sorted(INPUT.glob("**/gemma4_31b_peft_recipe.md")) if (p.parent.parent / "bundles").is_dir()), None)
+ADAPTER = next((p.parent for p in sorted(INPUT.glob("**/adapter_model.safetensors"))
+                if "sample_submission" not in str(p) and (p.parent / "adapter_config.json").exists()), None)
+assert DS is not None, "attach the dataset scottweeden/gemma-4-developer-agent-tool-lora-kit"
+print("dataset:", DS)
+print("adapter:", ADAPTER)
+EV = DS / "evidence"
+SAMPLING = json.loads((EV / "rebuild_sampling.json").read_text())
+EVAL_C2 = json.loads((EV / "rebuild_eval_c2.json").read_text())
+OUTCOMES = json.loads((EV / "rebuild_outcomes.json").read_text())
+M = json.loads((EV / "rebuild_metrics.json").read_text())
+A100 = json.loads((EV / "a1_harness_runs.json").read_text())
+plt.rcParams.update({"figure.dpi": 110, "axes.spines.top": False, "axes.spines.right": False})
+
+##### [markdown 2]
+## 1. Everything built so far
+
+The best build, a tool-use LoRA trained with a Megatron-Bridge / HF-PEFT recipe, was lost with a disk before it was ever submitted: adapter, training script and trajectories. Only the recipe survived. This table, `history/SUBMISSIONS.md`, is the honest ledger of every build to date.
+
+##### [code 3]
+display(Markdown((DS / "history" / "SUBMISSIONS.md").read_text().split("\n", 2)[2].split("## The 2026-10-21/22 rebuild")[0]))
+
+##### [markdown 4]
+## 2. Where the time goes on 4x L4
+
+All numbers in this section come from the real harness: `swegemma eval` with the subprocess sandbox, vLLM 0.19.1 from the competition wheelhouse, TP=4, 32k context, the `gemma4` tool and reasoning parsers, and thinking on. Each run uses A1's budgets: 8 minutes, 32 tool calls, 80 turns and 240 s per command.
+
+The first sampling pass ran 8 tasks at once. That is the community "fast local eval" default, and it was a mistake on this machine. With TP=4 at 80% utilization, the KV cache holds about 36k tokens: roughly 1.4 full-length sequences. Eight agents sharing it spend most of their 8 minutes waiting in vLLM's queue.
+
+##### [code 5]
+rows = []
+for r in SAMPLING:
+    o = OUTCOMES[r["run"]]["outcomes"]
+    rows.append({"run": r["run"], "fold": "rich" if "val" in r["run"] else "repo-train", "concurrency": 8, "T": r["temperature"],
+                 **{k: o.get(k, 0) for k in ("resolved", "fail_tests", "fail_no_patch", "fail_timeout")}, "tasks": r["tasks"]})
+for r in EVAL_C2:
+    o = OUTCOMES[r["run"]]["outcomes"]
+    rows.append({"run": r["run"], "fold": "rich", "concurrency": 2, "T": r["temperature"],
+                 **{k: o.get(k, 0) for k in ("resolved", "fail_tests", "fail_no_patch", "fail_timeout")}, "tasks": r["tasks"]})
+runs = pd.DataFrame(rows).set_index("run")
+runs["resolve_rate"] = (runs["resolved"] / runs["tasks"]).round(3)
+display(runs)
+
+fig, ax = plt.subplots(figsize=(9, 3.2))
+cols = {"resolved": "#2a9d8f", "fail_tests": "#e9c46a", "fail_no_patch": "#adb5bd", "fail_timeout": "#e76f51"}
+left = np.zeros(len(runs))
+for k, c in cols.items():
+    frac = (runs[k] / runs["tasks"]).values
+    ax.barh(runs.index, frac, left=left, color=c, label=k)
+    left += frac
+ax.set_xlabel("share of tasks"); ax.set_xlim(0, 1); ax.invert_yaxis()
+ax.legend(ncol=4, loc="lower center", bbox_to_anchor=(0.5, 1.0), frameon=False)
+ax.set_title("Outcome of every task, by run (A1 unless named)", pad=28)
+plt.tight_layout(); plt.show()
+print("A100 reference (17 Oct, concurrency 8): resolved", {s: v["resolved"] for s, v in A100["seeds"].items()}, "of 81, timeouts",
+      {s: v["outcomes"]["fail_timeout"] for s, v in A100["seeds"].items()})
+
+##### [markdown 6]
+**What it shows:**
+- **At concurrency 8, timeouts dominate:** 57 and 50 of 81 training-fold tasks. On an A100 the same bundle timed out on 27 to 30, with 17 to 18 resolved.
+- **On the rich fold, going from 8 tasks to 2 cut timeouts from 33 to 19 and added one resolve.** The resolve rate barely moves because the tasks that time out are mostly the hard ones.
+- **The scorer runs tasks one at a time** (host answer in discussion 743063), so local numbers at concurrency 8 understate the per-task speed and overstate the timeout rate.
+
+### The 12-hour budget
+
+The hidden set has about 120 tasks, public and private together, and they all run in one 12-hour window. That is about 6 minutes per task, including sandbox setup and test verification. The next cell projects the total runtime from A1's measured per-task durations (rich fold, concurrency 2) for different session caps. It assumes the scorer's single-task speed is 0.7x to 1.0x of these durations, plus 45 s of setup and verification per task.
+
+##### [code 7]
+dur = OUTCOMES["val_base_c2"]["resolved_durations_s"]
+sessions = OUTCOMES["val_base_c2"]["sessions"]
+table = []
+for cap in (8, 7, 6, 5):
+    for speed in (1.0, 0.8, 0.7):
+        # a timed-out session uses the whole cap; any other session takes its measured time x speed, capped
+        per_task = np.mean([cap * 60 if x["timeout"] else min(x["s"] * speed, cap * 60) for x in sessions]) + 45
+        kept = sum(x["resolved"] and x["s"] * speed <= cap * 60 for x in sessions)
+        table.append({"cap_min": cap, "speed": speed, "hours_for_120": round(per_task * 120 / 3600, 1), "rich_resolves_kept": f"{kept}/{len(dur)}"})
+proj = pd.DataFrame(table).pivot(index="cap_min", columns="speed", values=["hours_for_120", "rich_resolves_kept"])
+display(proj)
+fig, ax = plt.subplots(figsize=(7.5, 2.8))
+ax.hist(dur, bins=range(0, 541, 30), color="#2a9d8f", label="resolved tasks")
+for cap, c in ((6, "#e76f51"), (8, "#6c757d")):
+    ax.axvline(cap * 60, color=c, ls="--", label=f"{cap}-min cap")
+ax.set_xlabel("agent session seconds (rich fold, A1, concurrency 2)"); ax.set_ylabel("tasks"); ax.legend(frameon=False)
+plt.tight_layout(); plt.show()
+
+##### [markdown 8]
+An 8-minute cap risks running past 12 hours, which has errored whole submissions. A 5-minute cap gives up resolves that take 5 to 6.5 minutes. **6 minutes** is the cap this notebook submits. If the scorer's single-task speed is closer to 0.7x, a 7-minute cap would also fit. That is the first thing to try once a 6-minute run has scored.
+
+## 3. Does a graph-first prompt help?
+
+The competition ships a code graph, node embeddings and three graph tools. A1 mentions them, but in 4,732 logged model calls the agent called them only 7 times, because A1 makes every graph call pass a "GRAPH decision line" first. `bundles/graph_first` reverses the default:
+- Grep, then one `read_file`, then **one graph call instead of opening more files** (`get_code_neighbors` for callers, `search_similar_code` for siblings).
+- A first edit by tool call 8.
+- A thinking budget of 2048 instead of 4096.
+
+One detail matters here: `search_similar_code` returns the code of *other* symbols, never the query itself, so it cannot replace reading the target.
+
+##### [code 9]
+cmp = pd.DataFrame([{**{k: r[k] for k in ("run", "resolved", "tasks", "median_tool_calls", "timeouts")},
+                     "fail_tests": OUTCOMES[r["run"]]["outcomes"].get("fail_tests", 0), "mean_session_s": round(r["duration_s"]["sum"] / r["tasks"])}
+                    for r in EVAL_C2]).set_index("run")
+display(cmp)
+print("paired on the same 48 tasks:", OUTCOMES["paired_graph_vs_a1"])
+
+##### [markdown 10]
+Graph-first is faster. It has 5 fewer timeouts, a median of 21 tool calls instead of 26, and 33 s less per task. But it turns those savings into **test failures**, not resolves: it fails 15 test runs to A1's 11. Paired on the same 48 tasks it gains 1 and loses 2. Skipping reads makes the edits less careful. A1 stays the bundle.
+
+## 4. Rebuilding the LoRA
+
+### The recipe that survived
+`recipe/gemma4_31b_peft_recipe.md` separates a **convergence contract** (data, masking, LoRA shape, optimizer, batch, seed) from the **execution mapping** (how the job is laid out on hardware). The rebuild keeps the contract and uses mapping A (HF PEFT) on 4x L4, in its QLoRA variant, which the recipe says must be reported as its own experiment. Mapping B (Megatron Bridge on 8x H100) needs the NeMo container and is left as future work.
+
+##### [code 11]
+recipe = (DS / "recipe" / "gemma4_31b_peft_recipe.md").read_text()
+display(Markdown(recipe[recipe.index("## 2."):recipe.index("## 3.")]))
+
+##### [markdown 12]
+### Data: the model's own resolved turns, exactly as served
+`scripts/sample.py` runs A1 in the real harness on the 81 repo-train tasks (two passes at T=0.7). It puts a small logging proxy between the agent and vLLM, which writes every request (messages and tool schemas) and every response (reasoning, visible text, tool calls). This matters because ADK compacts long sessions: the prompt the model actually saw is not a replay of the harness trace.
+
+Three details that took a failed run each to find:
+- **Attribution.** The harness trace names tool calls `call_N`, while vLLM names them `chatcmpl-tool-*`, so ids never match. Calls are tied to tasks by linking tool-call ids across request histories (a session's later requests carry its earlier calls), anchored on (tool, arguments) pairs that occur in only one task's trace. That attributes 97% of calls.
+- **Rendering.** Each prompt is re-rendered with the model's own chat template and checked against vLLM's reported prompt length: all within one token. The target is the assistant turn as the model emits it: thought channel, then visible text, then the tool call, then `<|tool_response>`. Gemma 4's template puts visible text *after* tool calls when it renders history, but generation puts it before.
+- **Selection.** Only runs whose patch passed the hidden tests are used, at most 2 per task (runs with productive graph calls first, then fewer calls), and at most 8 turns each.
+
+##### [code 13]
+s = M["samples"]
+print({k: s[k] for k in ("samples", "tasks_with_samples", "tokens", "supervised_tokens", "prompt_token_match")})
+print("tool mix of the training turns:", s["tool_mix"])
+print("kept for training (4.5 h time box):", M["train_set"])
+
+##### [markdown 14]
+### Training on 24 GB cards
+Two problems had to be solved before a 16k-token sample would fit:
+1. **Gemma 4's 10 global-attention layers have head dimension 512.** PyTorch's fused SDPA kernels don't take that, so SDPA silently falls back to the math kernel and materializes heads × L × L scores, about 16 GiB per layer at 16k. `scripts/train.py` registers a query-chunked attention: 2,048 queries per chunk, each chunk recomputed in backward. It matches plain SDPA to a relative gradient difference of 5e-7.
+2. **PEFT casts every activation to fp32** to match fp32 LoRA weights, which doubles activation memory. Keeping fp32 master weights but turning that cast off and running the forward under bf16 autocast fixes it.
+
+With both, 16k fits, with a peak of 20.4 GiB on the last GPU, at 16.7 ms per token for nf4 31B with naive pipeline parallelism over 4 cards.
+
+##### [code 15]
+h = pd.DataFrame(M["train_history"])
+fig, ax = plt.subplots(1, 2, figsize=(10, 3))
+ax[0].plot(h["step"], h["loss"], marker="o", color="#264653"); ax[0].set_xlabel("optimizer step (16 sequences)"); ax[0].set_title("loss on assistant tokens")
+ax[1].plot(h["step"], h["lr"], color="#e76f51"); ax[1].set_xlabel("optimizer step"); ax[1].set_title("learning rate")
+plt.tight_layout(); plt.show()
+gates = pd.Series({
+    "context that fits": f'{M["max_len"]["max_len"]} tokens ({M["attention"]["impl"]}, chunk {M["attention"]["chunk"]})',
+    "peak GiB per GPU": M["fit_probe"]["peak_alloc_gib"],
+    "loss finite and decreasing": M["loss_sentinel"]["finite"] and M["loss_sentinel"]["decreased"],
+    "effect gate, max |Δ logit|": round(M["effect_gate"]["max_abs_logit_delta"], 2),
+    "held-out tool agreement, base → adapter": f'{M["heldout_tool_acc"]["base"]} → {M["heldout_tool_acc"]["adapter"]} (n={M["heldout_tool_acc"]["n"]})',
+    "rich-fold resolve rate with the adapter": M.get("val_adapter", {}).get("resolved", "pending (GPU quota)"),
+}, name="value")
+display(gates.to_frame())
+
+##### [markdown 16]
+**Reading the gates:**
+- **The adapter does something:** the largest change it makes to any output score is 18.3.
+- **It mostly keeps the base agent's tool choices:** 98.5% agreement on 200 held-out rich-fold decision points. The labels are the base agent's own choices, so this measures drift, not quality.
+- **The open question is whether it resolves more tasks.** That is a paired rich-fold run, A1 + adapter against A1's 14/48, and it was blocked by the weekly GPU quota. Other competitors report LoRA SFT on Gemma 4 31B lowering the loss without moving the solve rate, so the submitted bundle below ships **without** the adapter until that run is in.
+
+### Inside the adapter
+The cell below opens the model's `adapter_model.safetensors` and computes the size of each projection's update, ‖ΔW‖ = (alpha/r)·‖B·A‖, from the trained matrices.
+
+##### [code 17]
+if ADAPTER is None:
+    print("attach the model scottweeden/gemma-4-31b-swe-tool-use-lora to inspect the adapter")
+else:
+    from safetensors.numpy import load_file
+    cfg = json.loads((ADAPTER / "adapter_config.json").read_text())
+    try:
+        W = load_file(str(ADAPTER / "adapter_model.safetensors"))
+    except Exception:
+        import torch
+        from safetensors.torch import load_file as load_t
+        W = {k: v.float().numpy() for k, v in load_t(str(ADAPTER / "adapter_model.safetensors")).items()}
+    scale = cfg["lora_alpha"] / cfg["r"]
+    recs = []
+    for k in W:
+        if k.endswith("lora_A.weight"):
+            A = W[k].astype(np.float32); B = W[k.replace("lora_A", "lora_B")].astype(np.float32)
+            layer = int(k.split("layers.")[1].split(".")[0]); proj = k.split(".")[-3]
+            recs.append({"layer": layer, "proj": proj, "delta_norm": scale * float(np.linalg.norm(B @ A))})
+    df = pd.DataFrame(recs)
+    print(f"{len(df)} adapted projections, r={cfg['r']}, alpha={cfg['lora_alpha']}, target_modules={cfg['target_modules']}")
+    piv = df.pivot(index="layer", columns="proj", values="delta_norm")[["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]]
+    fig, ax = plt.subplots(figsize=(10, 3))
+    im = ax.imshow(piv.T.values, aspect="auto", cmap="viridis")
+    ax.set_yticks(range(7)); ax.set_yticklabels(piv.columns); ax.set_xlabel("decoder layer"); ax.set_title("‖ΔW‖ per projection (blank: no v_proj on global layers)")
+    plt.colorbar(im, ax=ax, fraction=0.02); plt.tight_layout(); plt.show()
+    display(df.groupby("proj")["delta_norm"].describe()[["mean", "max"]].round(3))
+
+##### [markdown 18]
+The update is not uniform. It is largest in the MLP `gate_proj` and `up_proj`, and grows over the last 10 layers. In attention it is largest in `q_proj` of the 10 global-attention layers (every sixth layer), the only layers that see the whole 16k context. Those layers' keys and values hardly moved.
+
+##### [markdown 19]
+## 5. Build `submission.zip`
+
+The bundle is `bundles/a1_graph_decision_6min`: A1 exactly as evaluated, with the session cap at 6 minutes. The notebook also writes `submission_with_adapter.zip`: the same bundle plus `adapter: main_lora` and the adapter files, in the layout of the competition's sample adapter. It is ready for when the paired run confirms the adapter helps.
+
+##### [code 20]
+ALLOWED = {".yaml", ".yml", ".md", ".txt", ".py", ".json", ".safetensors"}
+MAX_BYTES = 3 * 1024 ** 3
+kinds = json.loads((DS / "tools" / "check_kinds.json").read_text())
+
+
+def stage(with_adapter):
+    st = WORK / ("_stage_adapter" if with_adapter else "_stage")
+    shutil.rmtree(st, ignore_errors=True)
+    shutil.copytree(DS / "bundles" / "a1_graph_decision_6min", st)
+    if with_adapter:
+        (st / "adapters" / "main_lora").mkdir(parents=True)
+        for f in ("adapter_config.json", "adapter_model.safetensors"):
+            shutil.copy(ADAPTER / f, st / "adapters" / "main_lora" / f)
+        y = (st / "agent.yaml").read_text()
+        (st / "agent.yaml").write_text(y.replace("model: gemma-4-31b-it-qat-w4a16-ct\n", "model: gemma-4-31b-it-qat-w4a16-ct\nadapter: main_lora\n", 1))
+    rep = WORK / "_check.json"
+    subprocess.run([sys.executable, "-I", str(DS / "tools" / "check_submission.py"), str(st), "--report", str(rep)], capture_output=True, text=True, timeout=600)
+    res = json.loads(rep.read_text())["results"]; rep.unlink()
+    rows = [dict(id=k, **(v if isinstance(v, dict) else {"status": v})) for k, v in res.items()]
+    blocking = [r["id"] for r in rows if r.get("status") == "fail" and kinds["kinds"].get(r["id"]) in set(kinds["blocking_kinds"])]
+    assert not blocking, blocking
+    return st, {s: sum(r.get("status") == s for r in rows) for s in ("pass", "warn", "fail", "skip")}
+
+
+def build_zip(st, out):
+    files = sorted(p for p in st.rglob("*") if p.is_file())
+    assert all(p.suffix.lower() in ALLOWED and not p.is_symlink() for p in files)
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in files:
+            z.write(p, p.relative_to(st).as_posix())
+    with zipfile.ZipFile(out) as z:
+        names, unpacked = z.namelist(), sum(i.file_size for i in z.infolist())
+        assert z.testzip() is None and "agent.yaml" in names and not any(n.endswith("/") for n in names) and unpacked < MAX_BYTES
+    shutil.rmtree(st)
+    print(f"{out.name}: {len(names)} files, {unpacked / 2**20:.1f} MiB unpacked, sha256 {hashlib.sha256(out.read_bytes()).hexdigest()[:16]}")
+    return names
+
+
+st, counts = stage(False)
+print("checker:", counts, "| no blocking failures")
+print((st / "eval_config.yaml").read_text())
+build_zip(st, WORK / "submission.zip")
+if ADAPTER is not None:
+    st, counts = stage(True)
+    print("checker (with adapter):", counts)
+    build_zip(st, WORK / "submission_with_adapter.zip")
+
+##### [markdown 21]
+## 6. Future improvements
+
+In the order I would do them:
+1. **Run the paired rich-fold evaluation of the adapter** (`scripts/eval_adapter.py`, about 3 h on 4x L4) and ship it only if it beats 14/48 without more malformed calls. Also compare the epoch-1 checkpoint.
+2. **Spend the 12 hours better.** Score A1 at 6 minutes, then try 7. A budget-aware prompt that hands in its best partial patch at minute 5 would recover some of the 19 timeouts.
+3. **Train on what the agent gets wrong, not only what it gets right.** Every training turn is an on-policy success, so the loss starts at 0.17 and there is little left to learn. Better data:
+   - successes from more seeds (only 14 tasks were resolved);
+   - successful turns that follow a failed command;
+   - turns from runs that resolved after a near-timeout.
+4. **Use all 176 samples.** The time box kept 83. Packing the short samples, or moving to the recipe's mapping B on multi-GPU (Megatron Bridge, TP=2, CP=2), would let the full set train in the same 4.5 hours.
+5. **Make the graph tools pay off without losing care.** Graph-first saved time but cost tests. A variant that keeps A1's read-and-verify steps and only replaces the *second and later* file reads with one graph call is the untested middle ground.
+6. **Cut the cost of the gates.** The held-out tool-agreement check takes 88 minutes per model because each 16k prefix is a full forward pass on nf4. Caching the base prefix KV, or sampling 50 decision points instead of 200, would make it cheap.
+
+## Reproduce
+
+| Step | Script (in the dataset) | Hardware | Time |
+|---|---|---|---|
+| Rejection sampling with the logging proxy | `scripts/sample.py` | 4x L4, competition attached | 3.7 h |
+| Bundle evaluation at concurrency 2 | `scripts/eval_bundles.py` | 4x L4 | 5.0 h for two bundles |
+| LoRA training, gates and export | `scripts/train.py` | 4x L4 | 6.7 h |
+| Adapter evaluation | `scripts/eval_adapter.py` | 4x L4 | about 3 h |
+| Submission notebook | `scripts/make_submit_nb.py` | CPU | 1 min |
+
+On Kaggle, the 4x L4 machine is granted only to notebooks with the competition attached, with internet off and pushed with `--accelerator NvidiaL4`. The wheelhouse is built for Python 3.12, so pin the starter notebook's docker image.
+
+*Credits: the competition hosts for the harness, wheelhouse and starter notebook; the community threads on the scorer's concurrency, the 12-hour window, LoRA loading and the KV-cache limits (discussions 743063, 743964, 744331, 751339).*

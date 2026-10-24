@@ -1,0 +1,27 @@
+
+##### [markdown 0]
+# Optimizing W4A16 Thinking Budgets Under Strict Wall-Clock Timeouts
+This notebook analyzes the **LLM W4A16 Quantization & Thinking Budget Bench** (`robinamirbahar/llm-w4a16-quantization-thinking-budget-bench`) for `gemma-4-31b-it-qat-w4a16-ct`.
+
+
+##### [code 1]
+import glob
+import pandas as pd
+import matplotlib.pyplot as plt
+
+paths = glob.glob('/kaggle/input/**/w4a16_thinking_budget_latency.csv', recursive=True)
+df = pd.read_csv(paths[0])
+display(df)
+
+
+##### [code 2]
+fig, ax1 = plt.subplots(figsize=(8, 4.5), dpi=120)
+ax1.bar(df['config_id'], df['task_resolution_rate_pct'], color='#2b5c8f', alpha=0.85, label='Resolution Rate (%)')
+ax1.set_ylabel('Task Resolution Rate (%)', color='#2b5c8f')
+ax1.set_xlabel('Configuration ID (BF16 / W4A16_QAT / FP8)')
+ax2 = ax1.twinx()
+ax2.plot(df['config_id'], df['mean_turn_latency_sec'], color='#d95f02', marker='o', linewidth=2.5, label='Mean Turn Latency (s)')
+ax2.set_ylabel('Mean Turn Latency (sec)', color='#d95f02')
+plt.title('Gemma 4 31B: Task Resolution Rate vs Turn Latency Across Quantization Configs')
+plt.tight_layout()
+plt.show()

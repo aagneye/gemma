@@ -1,0 +1,34 @@
+[
+ {
+  "run": "val_base_c2",
+  "tasks": 48,
+  "resolved": 14,
+  "rate": 0.2917,
+  "temperature": 0.2,
+  "minutes": 158.4,
+  "median_tool_calls": 26,
+  "duration_s": {
+   "p50": 456.97,
+   "p90": 484.81,
+   "max": 723.02,
+   "sum": 18819
+  },
+  "timeouts": 19
+ },
+ {
+  "run": "val_graph_c2",
+  "tasks": 48,
+  "resolved": 13,
+  "rate": 0.2708,
+  "temperature": 0.2,
+  "minutes": 144.3,
+  "median_tool_calls": 21,
+  "duration_s": {
+   "p50": 426.47,
+   "p90": 483.59,
+   "max": 625.08,
+   "sum": 17211
+  },
+  "timeouts": 14
+ }
+]

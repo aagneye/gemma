@@ -1,0 +1,25 @@
+{
+  "id": "nihilisticneuralnet/gemma-4-developer-agent-direct-code-verifier",
+  "id_no": 135845502,
+  "title": "Gemma 4 Developer Agent: Direct Code Verifier",
+  "code_file": "gemma-4-developer-agent-direct-code-verifier.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    ""
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "gemma-4-developer-agent"
+  ],
+  "model_sources": [
+    "google/gemma-4/Other/gemma-4-31b-it-qat-w4a16-ct/2"
+  ],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:dafd4ce5668bbf1ad422e4c109e0f18c9623c3a7c7f48b0235f13142755c40b9",
+  "machine_shape": "None"
+}

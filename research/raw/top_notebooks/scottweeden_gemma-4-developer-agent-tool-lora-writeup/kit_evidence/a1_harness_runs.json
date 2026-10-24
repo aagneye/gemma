@@ -1,0 +1,65 @@
+{
+ "template": "A1 (bundles/a1_graph_decision): shipping prompt + GRAPH decision line, 9 tools, no skills",
+ "model": "gemma-4-31b-it-qat-w4a16-ct served by the competition vLLM 0.19.1 wheel on one Colab A100-80GB",
+ "harness": "swegemma eval, subprocess sandbox, 8 min / 32 calls / 80 turns / 240 s per task, concurrency 8, T=0.7",
+ "fold": "repo-train (fastapi 67, requests 13, httpx 1 public tasks); 18 fastapi tasks are unsolvable in the public-kit environment (inline_snapshot missing)",
+ "note": "Aggregates only; no task text, patches or tests are included (competition Rule 2.4).",
+ "seeds": {
+  "0": {
+   "tasks": 81,
+   "resolved": 18,
+   "resolve_rate": 0.222,
+   "by_repo": {
+    "fastapi": [
+     15,
+     67
+    ],
+    "httpx": [
+     0,
+     1
+    ],
+    "requests": [
+     3,
+     13
+    ]
+   },
+   "outcomes": {
+    "fail_tests": 27,
+    "fail_timeout": 30,
+    "resolved": 18,
+    "fail_no_patch": 6
+   },
+   "median_tool_calls": 28,
+   "trajectories_with_graph_calls": 4,
+   "trajectories_with_GRAPH_decision_line": 11
+  },
+  "1": {
+   "tasks": 81,
+   "resolved": 17,
+   "resolve_rate": 0.21,
+   "by_repo": {
+    "fastapi": [
+     15,
+     67
+    ],
+    "httpx": [
+     0,
+     1
+    ],
+    "requests": [
+     2,
+     13
+    ]
+   },
+   "outcomes": {
+    "fail_timeout": 27,
+    "fail_tests": 33,
+    "resolved": 17,
+    "fail_no_patch": 4
+   },
+   "median_tool_calls": 27,
+   "trajectories_with_graph_calls": 1,
+   "trajectories_with_GRAPH_decision_line": 15
+  }
+ }
+}

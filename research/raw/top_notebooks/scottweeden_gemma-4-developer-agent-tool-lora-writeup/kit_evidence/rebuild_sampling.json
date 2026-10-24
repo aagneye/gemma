@@ -1,0 +1,29 @@
+[
+ {
+  "run": "train_s0",
+  "tasks": 81,
+  "resolved": 10,
+  "rate": 0.1235,
+  "temperature": 0.7,
+  "minutes": 80.8,
+  "median_tool_calls": 21
+ },
+ {
+  "run": "train_s1",
+  "tasks": 81,
+  "resolved": 12,
+  "rate": 0.1481,
+  "temperature": 0.7,
+  "minutes": 79.9,
+  "median_tool_calls": 21
+ },
+ {
+  "run": "val_base",
+  "tasks": 48,
+  "resolved": 13,
+  "rate": 0.2708,
+  "temperature": 0.2,
+  "minutes": 48.3,
+  "median_tool_calls": 18
+ }
+]

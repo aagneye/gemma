@@ -1,0 +1,485 @@
+
+##### [markdown 0]
+# Gemma 4: Most-Run Public Config Averages 10/58
+
+**Public agent configs in this competition that were scored more than once, grouped by the exact files they submit.**
+
+I listed all 274 public notebooks attached to this competition and read the version history of 270 of
+them (2026-10-22 05:51 to 06:26 UTC). 66 have at least one scored version: 141 scored versions by 54 authors.
+I traced each scored version's code to the files it writes to `submission.zip`, and 40 versions could be
+traced. Among them, 6 file sets were scored at least twice: 29 draws in all, including 4
+of my own submissions of public files.
+
+What the repeated draws show:
+
+- **The same files do not score the same from run to run.** One draw moves by 1.56 tasks (pooled SD), so 95% of
+  draws land within about ±3.2 tasks of a config's mean.
+- **The most-run public file set averages 10.00 of 58 tasks.** That is Gemma 4 Agent: Budget-Fit Single Agent V5 (Wilmer E. Henao), over 10 draws (95%
+  interval 8.98 to 11.02). The 4 file sets with at least three draws average between 9.25 and
+  10.00, and their intervals overlap, so these draws cannot rank them.
+- **A high draw came back down.** Igor Zharov's *Gemma 4 | Budget - Aware Coding Agent v2* Version 10 scored 13 on its
+  first public run. Files with the same files_sha256 then re-ran 7 times as 7, 7, 8, 9, 10, 10 and 10 (mean
+  8.71).
+- **The top blocks have more submissions behind them.** The 4 teams at 0.24 have a median of
+  15.5 submissions; the 555 teams at 0.17, a median of 7.0.
+- **Ties go to the earlier submission** under the competition rules. With whole-task scores the board is a staircase
+  of exact ties: 424 teams share 0.18.
+
+The table is a public dataset, [Gemma 4 Agent: Public Config Draws](https://www.kaggle.com/datasets/dariushafshar/gemma-4-agent-public-config-draws).
+This notebook reads only that dataset, and every number in the text is printed by its own code below.
+
+##### [markdown 1]
+## 1. The table
+
+There is one row per scored public version: the notebook, the version, its public score, and **files_sha256**. That
+is the sha256 of `json.dumps(FILES, sort_keys=True)`, where `FILES` is the dictionary of bundle paths to file text
+that the version's own code writes to `submission.zip`.
+
+I read each version's code as text and walked it statement by statement. Its dictionary literals and copies were
+traced to the one written to `submission.zip`, and every zip write had to put that dictionary's own texts into the
+archive unchanged. Nothing was run.
+- 40 versions could be traced to the files they submit.
+- 38 have a bundle dictionary, but their write to `submission.zip` could not be tied to exactly one known,
+  unedited dictionary. The reasons:
+  - no traceable write: 22;
+  - a write not tied to one dictionary: 15;
+  - different bundles written: 1;
+  - a cell that does not parse: 0.
+
+  They are left out of every group.
+- 63 have no bundle dictionary that can be read without running the code.
+- Code could not be read for 0 of them.
+
+Equal hashes therefore mean that the same dictionary of file texts went into `submission.zip` through every write the
+trace could see. Code that added files to the archive by some route the trace does not recognise would not be caught.
+
+The version histories of 4 listed notebooks could not be read at all. The dataset names them.
+
+The table also holds 4 of my own submissions of two public file sets. These are all of my submissions of those
+two file sets, each made after that file set's first public run. They carry no submission ids or dates.
+
+##### [code 2]
+import glob, hashlib, json, math, os, re
+import numpy as np
+import pandas as pd
+from scipy import integrate, stats
+
+ROOT = os.environ.get("CENSUS_INPUT", "/kaggle/input")
+WORK = os.environ.get("CENSUS_WORK", "/kaggle/working")
+K = 58   # public tasks: checked against every displayed score in section 2
+
+
+def locate(name):
+    """Find a dataset file by name: dataset mounts first (fast), the whole input tree only as a fallback."""
+    for pattern in ("datasets/*/*/" + name, "*/" + name, "*/*/" + name, "**/" + name):
+        hits = sorted(glob.glob(os.path.join(ROOT, pattern), recursive=True))
+        if hits:
+            assert len(hits) == 1, (name, hits)
+            return hits[0]
+    raise FileNotFoundError(name)
+
+
+draws = pd.read_csv(locate("public_config_draws.csv"), dtype=str, keep_default_na=False)
+board = pd.read_csv(locate("board_blocks.csv"), dtype=str, keep_default_na=False)
+meta = json.load(open(locate("census_meta.json")))
+draws["tasks"] = draws["tasks_of_58"].astype(int)
+for c in ("tasks_of_58", "teams", "rank_first", "rank_last"):
+    board[c] = board[c].astype(int)
+board["median_submissions"] = board["median_submissions"].astype(float)
+pub = draws[draws["source"] == "public_notebook"].copy()
+own = draws[draws["source"] == "own_submission"].copy()
+
+HL = {}
+
+
+def hl(key, value, fmt="{}"):
+    HL[key] = fmt.format(value)
+    return HL[key]
+
+
+print("read (UTC):", hl("read_utc", meta["read_utc"]), "| board snapshot (UTC):", hl("board_utc", board["snapshot_utc"].iloc[0]))
+print("public notebooks attached to the competition:", hl("n_listed", meta["notebooks_listed"]),
+      "| version history unreadable:", hl("n_unread", len(meta["version_history_unreadable"])),
+      "| read:", hl("n_read", meta["notebooks_listed"] - len(meta["version_history_unreadable"])))
+print("  with at least one scored version:", hl("n_nb", pub["notebook_ref"].nunique()),
+      "| authors:", hl("n_authors", pub["author_username"].nunique()))
+print("scored public versions:", hl("n_versions", len(pub)), "| my own submissions of public file sets:", hl("n_own", len(own)))
+kinds = pub["hash_kind"].value_counts()
+print("hashed by the files they submit:", hl("n_files", int(kinds.get("files", 0))),
+      "| bundle not traced:", hl("n_ambig", int(kinds.get("ambiguous", 0))),
+      "| no bundle dictionary:", hl("n_codetext", int(kinds.get("code_text", 0))),
+      "| code not readable:", hl("n_unavail", int(kinds.get("unavailable", 0))))
+am = pub.loc[pub["hash_kind"] == "ambiguous", "hash_method"]
+print("  untraced because: no traceable write", hl("amb_nowrite", int(am.str.startswith("no submission.zip write").sum())),
+      "| a write not tied to one dictionary", hl("amb_notone", int(am.str.startswith("a submission.zip write").sum())),
+      "| different bundles written", hl("amb_diff", int(am.str.contains("different bundles").sum())),
+      "| a cell that does not parse", hl("amb_unparsed", int(am.str.contains("could not be parsed").sum())))
+
+##### [markdown 3]
+## 2. Scores are whole tasks
+
+Kaggle shows the public score truncated to two decimals. Of all task counts from 30 to 78, only 58
+reproduces every one of the 15 distinct scores in the table and on the board. Some larger counts also fit scores
+this low (the smallest is 79). But the competition's data page puts the public half near 60: "There are about 120
+tasks in the test set, evenly divided between the public and private splits." So the public half has 58 tasks, and
+one task is worth 0.017 of score. Everything below counts tasks, not score points.
+
+##### [code 4]
+shown = sorted({float(s) for s in pd.concat([draws["public_score"], board["public_score"]])})
+
+
+def fits(n):
+    return all(any(math.floor(k * 100 / n + 1e-9) / 100 == s for k in range(n + 1)) for s in shown)
+
+
+ok = [n for n in range(30, 131) if fits(n)]
+print(f"{hl('n_shown', len(shown))} distinct displayed scores; task counts from 30 to 130 that reproduce all of them: {ok}")
+nxt = min(n for n in ok if n > K)
+assert [n for n in ok if n < nxt] == [K], "58 must be the only fitting count below the next one"
+hl("next_fit", nxt); hl("below_next", nxt - 1)
+print(f"from 30 to {HL['below_next']}, only {K} fits; some larger counts fit too, the smallest {HL['next_fit']}")
+import re as _re
+total = int(_re.search(r"about (\d+) tasks", meta["sources"]["data_page"]["quote"]).group(1))
+print(f"data page: about {total} tasks, evenly divided -> about {hl('half', total // 2)} per half; {K} is the only fitting count near it")
+print("public tasks:", hl("K", K))
+for key in ("data_page", "rules_ties", "rules_final", "rules_boards"):      # the sourced sentences quoted in the prose
+    print(f"source {key}: \"{meta['sources'][key]['quote']}\" ({meta['sources'][key]['url']})")
+assert all(t == math.ceil(float(s) * K - 1e-9) for s, t in zip(draws["public_score"], draws["tasks"]))
+conv = pd.DataFrame({"tasks solved": range(4, 16)})
+conv["public score"] = [f"{math.floor(k * 100 / K + 1e-9) / 100:.2f}" for k in conv["tasks solved"]]
+print(conv.set_index("tasks solved").T.to_string())
+hl("one_task", 1 / K, "{:.3f}")
+print("one task =", HL["one_task"], "of the public score")
+
+##### [markdown 5]
+## 3. Every traced file set scored more than once
+
+Each row is one exact file set, named after the earliest public version that carries it.
+- **public draws** lists its public scores in tasks, oldest first.
+- **mine** lists my own draws of the same files.
+- The 95% interval uses the pooled SD of all file sets (1.56 tasks on 23 degrees of freedom), because two or three
+  draws cannot estimate their own spread.
+
+##### [code 6]
+hashed = draws[draws["files_sha256"] != ""]
+rows = []
+for sha, d in hashed.groupby("files_sha256", sort=False):
+    if len(d) < 2:
+        continue
+    p = d[d["source"] == "public_notebook"].sort_values(["version_date_utc", "notebook_ref", "version"])
+    o = d[d["source"] == "own_submission"]
+    rows.append({"sha": sha, "files": sha[:8], "config": d["config_label"].iloc[0], "n": len(d),
+                 "public draws (oldest first)": " ".join(map(str, p["tasks"])),
+                 "mine": " ".join(map(str, o["tasks"])) or "-", "mean": d["tasks"].mean(),
+                 "first": int(p["tasks"].iloc[0]), "rest": d["tasks"].drop(p.index[0]).tolist(),
+                 "who": ", ".join(dict.fromkeys(p["author"]))})
+G = pd.DataFrame(rows)
+dev = sum(((d["tasks"] - d["tasks"].mean()) ** 2).sum() for _, d in hashed.groupby("files_sha256") if len(d) >= 2)
+df_pool = int((G["n"] - 1).sum())
+sd_pool = math.sqrt(dev / df_pool)
+tq = stats.t.ppf(0.975, df_pool)
+G["low"] = G["mean"] - tq * sd_pool / np.sqrt(G["n"])
+G["high"] = G["mean"] + tq * sd_pool / np.sqrt(G["n"])
+G = G.sort_values(["mean", "n"], ascending=[False, False]).reset_index(drop=True)
+table = G[["config", "files", "n", "public draws (oldest first)", "mine", "mean", "low", "high"]].copy()
+table["config"] = table["config"].str.slice(0, 64)
+pd.set_option("display.width", 250)
+print(table.to_string(index=False, formatters={c: "{:.2f}".format for c in ("mean", "low", "high")}))
+print(f"\npooled within-config SD {hl('sd', sd_pool, '{:.2f}')} tasks on {hl('df', df_pool)} df; "
+      f"95% interval = mean +/- {tq:.2f} x {sd_pool:.2f} / sqrt(n)")
+hl("n_groups", len(G)); hl("n_groups_draws", int(G["n"].sum()))
+print("file sets scored at least twice:", HL["n_groups"], "| draws in them:", HL["n_groups_draws"])
+big = G[G["n"] >= 3]
+hl("n_big", len(big)); hl("big_lo", big["mean"].min(), "{:.2f}"); hl("big_hi", big["mean"].max(), "{:.2f}")
+top = G.iloc[0]
+hl("top_mean", top["mean"], "{:.2f}"); hl("top_n", int(top["n"])); hl("top_config", top["config"])
+hl("top_low", top["low"], "{:.2f}"); hl("top_high", top["high"], "{:.2f}")
+print("highest mean:", HL["top_config"], "|", HL["top_mean"], "over", HL["top_n"], "draws, 95% interval", HL["top_low"], "to", HL["top_high"])
+for _, r in G.iterrows():          # every file set's numbers, keyed by the first 8 characters of its files_sha256
+    f = "f" + r["files"]
+    hl(f + "_mean", r["mean"], "{:.2f}"); hl(f + "_n", int(r["n"])); hl(f + "_low", r["low"], "{:.2f}")
+    hl(f + "_high", r["high"], "{:.2f}"); hl(f + "_draws", r["public draws (oldest first)"].replace(" ", ", "))
+    hl(f + "_mine", r["mine"].replace(" ", ", "))
+mr = G.sort_values(["n", "mean"], ascending=[False, False]).iloc[0]          # the most-run file set
+d_mr = hashed[hashed["files_sha256"] == mr["sha"]]["tasks"]
+hl("mr_config", mr["config"]); hl("mr_n", int(mr["n"])); hl("mr_mean", mr["mean"], "{:.2f}")
+hl("mr_low", mr["low"], "{:.2f}"); hl("mr_high", mr["high"], "{:.2f}"); hl("mr_best_above", d_mr.max() - d_mr.mean(), "{:.2f}")
+print("most-run file set:", HL["mr_config"], "|", HL["mr_n"], "draws, mean", HL["mr_mean"], "(95%", HL["mr_low"], "to",
+      HL["mr_high"], ") | its best draw is", HL["mr_best_above"], "above its mean")
+
+##### [code 7]
+import matplotlib
+import matplotlib.pyplot as plt
+SURF, INK, INK2, MUTED, GRID, AXIS, BLUE = "#fcfcfb", "#0b0b0b", "#52514e", "#898781", "#e1e0d9", "#c3c2b7", "#2a78d6"
+C = G[G["n"] >= 3].iloc[::-1].reset_index(drop=True)          # highest mean at the top
+fig, ax = plt.subplots(figsize=(10, 0.62 * len(C) + 1.9), dpi=110)
+fig.patch.set_facecolor(SURF); ax.set_facecolor(SURF)
+for y, r in C.iterrows():
+    d = hashed[hashed["files_sha256"] == r["sha"]]
+    seen = {}
+    for t, src in zip(d["tasks"], d["source"]):
+        j = seen.get(t, 0); seen[t] = j + 1          # tied draws: three across (inside one whole task), then up
+        xx = t + {0: 0.0, 1: 0.18, 2: -0.18}[j % 3]
+        yy = y + 0.12 + 0.14 * (j // 3)
+        mine = src == "own_submission"
+        ax.scatter(xx, yy, s=58, zorder=3, facecolor=SURF if mine else BLUE, edgecolor=BLUE if mine else SURF,
+                   linewidth=1.6 if mine else 1.4)
+    ax.plot([r["low"], r["high"]], [y - 0.24, y - 0.24], color=INK, linewidth=1.6, solid_capstyle="round", zorder=2)
+    ax.plot([r["mean"], r["mean"]], [y - 0.36, y - 0.12], color=INK, linewidth=2.4, zorder=2)
+iv = C.index[C["files"] == "56010e9e"]
+if len(iv):                                       # one direct label: the first public run of the V10 files
+    yv, xv = iv[0], C.loc[iv[0], "first"]
+    ax.annotate("first public run", xy=(xv, yv + 0.12), xytext=(xv - 0.35, yv + 0.42), ha="right", va="center",
+                fontsize=8, color=INK2, arrowprops=dict(arrowstyle="-", color=MUTED, linewidth=0.8))
+import re
+short = lambda c: re.sub(r"^Gemma 4\s*(?:Agent)?\s*[:|]?\s*", "", c)        # every label starts with the same words
+lab = [f"{short(c)}  (n={n})" for c, n in zip(C["config"], C["n"])]
+ax.set_yticks(range(len(C))); ax.set_yticklabels(lab, color=INK2, fontsize=9)
+lo_x = min(hashed[hashed["files_sha256"].isin(C["sha"])]["tasks"].min(), int(C["low"].min())) - 1
+ax.set_xlim(lo_x - 0.5, 14.5); ax.set_xticks(range(lo_x, 15)); ax.set_ylim(-0.7, len(C) - 0.3)
+ax.set_xlabel("tasks solved of 58 public tasks", color=INK2)
+ax.tick_params(axis="x", colors=MUTED); ax.tick_params(axis="y", length=0)
+ax.grid(axis="x", color=GRID, linewidth=0.8); ax.set_axisbelow(True)
+for s in ("top", "right", "left"):
+    ax.spines[s].set_visible(False)
+ax.spines["bottom"].set_color(AXIS)
+fig.tight_layout(rect=(0, 0, 1, 0.84))
+fig.text(0.01, 0.97, "Same files, different scores", ha="left", va="top", fontsize=14, color=INK, fontweight="bold")
+fig.text(0.01, 0.905, "Each row is one exact file set scored at least 3 times. Filled dot: one public draw; "
+         "hollow dot: one of my own draws of the same files.\nBlack tick: the mean. Black line: its 95% interval "
+         "(pooled SD). Tied draws sit side by side within one task.", ha="left", va="top", fontsize=9, color=INK2)
+fig.savefig(os.path.join(WORK, "same_files_different_scores.png"), facecolor=SURF)
+plt.show()
+
+##### [markdown 8]
+## 4. Same files, different scores
+
+If every task were an independent coin with the same solve rate (the average one), one draw would have an SD of
+2.79 tasks. The measured SD is 1.56, 0.56 of that, which is consistent with tasks that
+differ in how often they are solved. That still leaves about ±3.2 tasks of noise in a single draw.
+
+The means of the 4 file sets with three or more draws span only 0.75 tasks (9.25 to 10.00), so
+one draw's noise is wider than the whole range of these means.
+
+##### [code 9]
+allg = hashed[hashed["files_sha256"].isin(G["sha"])]
+p_bar = allg["tasks"].mean() / K
+sd_binom = math.sqrt(K * p_bar * (1 - p_bar))
+print(f"mean of all grouped draws {allg['tasks'].mean():.2f} tasks; a coin-per-task model at that rate has SD "
+      f"{hl('sd_binom', sd_binom, '{:.2f}')}; measured {HL['sd']} = {hl('sd_ratio', sd_pool / sd_binom, '{:.2f}')} of it")
+hl("one_draw_95", tq * sd_pool, "{:.1f}")
+print("one draw: 95% of draws fall within about +/-", HL["one_draw_95"], "tasks of the config's mean (t", f"{tq:.2f}", "x SD)")
+spread = big["mean"].max() - big["mean"].min()
+hl("big_range", spread, "{:.2f}")
+print(f"range of means over the {HL['n_big']} file sets with >= 3 draws: {HL['big_lo']} to {HL['big_hi']} = {HL['big_range']} tasks")
+assert tq * sd_pool > spread, "prose says one draw's 95% noise is wider than the whole range of these means"
+
+##### [markdown 10]
+## 5. A config's best draw overstates it
+
+Igor Zharov published *Gemma 4 | Budget - Aware Coding Agent v2* Version 10 at 13 of 58 tasks. That is the highest single draw
+of any file set in this table that was scored more than once.
+- Files with the same files_sha256 were then run 7 more times. Runs per person: prvsiyan (1), Дворкин Евгений Владимирович (3), KAIWALYA RAUT (1) and me (2).
+- They scored 7, 7, 8, 9, 10, 10 and 10: a mean of 8.71, which is 4.29 tasks (2.7 SD) below that first run.
+
+None of this is a fault in the config. The first run sits 2.4 SD above the file set's mean. That is a rare
+draw, but rare draws turn up when 3,430 teams keep submitting, and a high public score is the one people see.
+
+Across these 4 file sets, the first public draw showed no consistent edge: it sat above the mean of the later
+ones in 2 of 4. What overstates a config is picking its best draw. Here the best single draw is on average
+2.72 tasks above the mean of the other draws (1.11 to 4.29).
+
+##### [code 11]
+v = G[G["files"] == "56010e9e"].iloc[0]
+rest = sorted(v["rest"])
+dv = hashed[hashed["files_sha256"] == v["sha"]]
+pv = dv[dv["source"] == "public_notebook"].sort_values(["version_date_utc", "notebook_ref", "version"])
+n_mine = int((dv["source"] == "own_submission").sum())
+others = list(dict.fromkeys(pv["author"].iloc[1:]))
+hl("v10_author", pv["author"].iloc[0]); hl("v10_title", pv["notebook_title"].iloc[0]); hl("v10_version", pv["version"].iloc[0])
+cnt = pv["author"].iloc[1:].value_counts()
+who = [f"{a} ({cnt[a]})" for a in dict.fromkeys(pv["author"].iloc[1:])]
+hl("v10_who", ", ".join(who) + (f" and me ({n_mine})" if n_mine else ""))
+hl("v10_sd_above", (v["first"] - v["mean"]) / sd_pool, "{:.1f}")
+hl("v10_n_mine", n_mine)
+grouped = hashed[hashed["files_sha256"].isin(G["sha"])]
+hl("max_grouped", int(grouped["tasks"].max())); hl("max_grouped_n", int((grouped["tasks"] == grouped["tasks"].max()).sum()))
+assert v["first"] == grouped["tasks"].max() and HL["max_grouped_n"] == "1", "prose claims the V10 first draw is the unique maximum"
+print("highest draw of any file set scored at least twice:", HL["max_grouped"], "| draws at that value:", HL["max_grouped_n"])
+print("re-runs of", HL["v10_title"], "Version", HL["v10_version"], "(runs per person):", HL["v10_who"])
+print("the first run is", HL["v10_sd_above"], "SD above the file set's mean of", f"{v['mean']:.2f}")
+hl("v10_first", v["first"]); hl("v10_rest", ", ".join(map(str, rest[:-1])) + " and " + str(rest[-1]))
+hl("v10_rest_n", len(rest)); hl("v10_rest_mean", np.mean(rest), "{:.2f}")
+hl("v10_gap", v["first"] - np.mean(rest), "{:.2f}"); hl("v10_gap_sd", (v["first"] - np.mean(rest)) / sd_pool, "{:.1f}")
+print(f"{v['config']}: first public draw {HL['v10_first']}; the same files re-ran {HL['v10_rest_n']} times as "
+      f"{HL['v10_rest']} (mean {HL['v10_rest_mean']}): {HL['v10_gap']} tasks = {HL['v10_gap_sd']} SD below the first draw")
+F = G[G["n"] >= 3].copy()
+F["later mean"] = [np.mean(r) for r in F["rest"]]
+F["first minus later"] = F["first"] - F["later mean"]
+alld = {s: hashed[hashed["files_sha256"] == s]["tasks"].tolist() for s in F["sha"]}
+F["best"] = [max(alld[s]) for s in F["sha"]]
+F["mean of the others"] = [(sum(alld[s]) - max(alld[s])) / (len(alld[s]) - 1) for s in F["sha"]]
+F["best minus others"] = F["best"] - F["mean of the others"]
+fmt = {c: "{:.2f}".format for c in ("later mean", "mean of the others")}
+fmt.update({c: "{:+.2f}".format for c in ("first minus later", "best minus others")})
+print(F[["config", "n", "first", "later mean", "first minus later", "best", "mean of the others", "best minus others"]]
+      .assign(config=[re.sub(r"^Gemma 4\s*(?:Agent)?\s*[:|]?\s*", "", c) for c in F["config"]]).to_string(index=False, formatters=fmt))
+hl("first_minus_later", F["first minus later"].mean(), "{:+.2f}"); hl("n_first_pos", int((F["first minus later"] > 0).sum()))
+hl("best_minus_others", F["best minus others"].mean(), "{:.2f}")
+hl("bmo_lo", F["best minus others"].min(), "{:.2f}"); hl("bmo_hi", F["best minus others"].max(), "{:.2f}")
+print("first draw above the later mean in", HL["n_first_pos"], "of", HL["n_big"], "file sets (average", HL["first_minus_later"], "tasks);",
+      "best draw above the mean of the others by", HL["best_minus_others"], "tasks on average (", HL["bmo_lo"], "to", HL["bmo_hi"], ")")
+
+##### [markdown 12]
+## 6. What best-of-many does to a public score
+
+Under a normal model of the draws, the best of k draws of one config beats the config's mean by about
+SD × E[max of k standard normal draws]:
+- 0.88 tasks for 2 draws;
+- 1.81 for 5;
+- 2.40 for 10;
+- 2.91 for 20.
+
+So under that model, a team that resubmits one unchanged config ten times holds a best public score 2.40 tasks
+above that config's mean on average. In the data, the most-run file set's best draw is 1.00 tasks above its
+mean over 10 draws.
+
+The board shows a matching gradient in how often teams have submitted:
+
+| public score | tasks | teams | median submissions |
+|---|---|---|---|
+| 0.24 | 14 | 4 | 15.5 |
+| 0.22 | 13 | 35 | 12.0 |
+| 0.20 | 12 | 148 | 11.0 |
+| 0.18 | 11 | 424 | 9.0 |
+| 0.17 | 10 | 555 | 7.0 |
+
+The direction fits the best-of-many arithmetic, but the size does not. Under the normal model, going from
+7 to 16 draws adds about 0.65 tasks, while the 0.17 and 0.24 blocks are 4 tasks apart.
+So under this model, repeated draws of one config explain only a small part of that gap. Better configs and more
+effort are the obvious candidates for the rest, and a snapshot cannot separate them.
+
+##### [code 13]
+def e_max(k):
+    if k == 1:
+        return 0.0
+    return integrate.quad(lambda x: x * k * stats.norm.pdf(x) * stats.norm.cdf(x) ** (k - 1), -12, 12)[0]
+
+
+best = pd.DataFrame({"draws of one config": [1, 2, 3, 5, 10, 20]})
+best["best draw minus the mean (tasks)"] = [sd_pool * e_max(k) for k in best["draws of one config"]]
+print(best.to_string(index=False, formatters={"best draw minus the mean (tasks)": "{:.2f}".format}))
+for k, x in zip(best["draws of one config"], best["best draw minus the mean (tasks)"]):
+    hl(f"best{k}", x, "{:.2f}")
+b = board[["public_score", "tasks_of_58", "teams", "rank_first", "rank_last", "median_submissions"]].head(7)
+print(b.to_string(index=False))
+for _, r in b.iterrows():
+    s = r["public_score"].replace(".", "")
+    hl(f"blk{s}_teams", f"{r['teams']:,}"); hl(f"blk{s}_first", f"{r['rank_first']:,}"); hl(f"blk{s}_last", f"{r['rank_last']:,}")
+    hl(f"blk{s}_med", r["median_submissions"], "{:.1f}"); hl(f"blk{s}_tasks", r["tasks_of_58"])
+hl("teams", f"{board['teams'].sum():,}")
+lo_b, hi_b = b[b["public_score"] == "0.17"].iloc[0], b[b["public_score"] == "0.24"].iloc[0]
+k_lo, k_hi = int(math.ceil(lo_b["median_submissions"])), int(math.ceil(hi_b["median_submissions"]))
+hl("grad_k_lo", k_lo); hl("grad_k_hi", k_hi)
+hl("grad_gain", sd_pool * (e_max(k_hi) - e_max(k_lo)), "{:.2f}"); hl("blk_gap", int(hi_b["tasks_of_58"] - lo_b["tasks_of_58"]))
+print(f"normal model: best of {k_hi} draws minus best of {k_lo} draws = {HL['grad_gain']} tasks; "
+      f"the 0.24 and 0.17 blocks are {HL['blk_gap']} tasks apart")
+for _, r in b.iterrows():
+    s = r["public_score"].replace(".", "")
+    print(f"{r['public_score']}: {HL[f'blk{s}_teams']} teams share it, ranks {HL[f'blk{s}_first']} to {HL[f'blk{s}_last']}")
+print("teams on the board:", HL["teams"])
+
+##### [markdown 14]
+## 7. Ties, and choosing the final two
+
+The [competition rules](https://www.kaggle.com/competitions/gemma-4-developer-agent/rules) set four things:
+- In the event of a tie, the submission entered first wins.
+- Each team may select up to two final submissions.
+- The private leaderboard is based on the private test set.
+- The public leaderboard is based on the public test set.
+
+Whole-task scores make exact ties the normal case:
+- 424 teams share 0.18 (ranks 188 to 611);
+- 555 teams share 0.17 (ranks 612 to 1,166).
+
+What that means for the final two:
+
+1. **Choose the config by its mean over identical draws, not by its best public draw.** These data have no private
+   scores. If a run's luck on the public tasks does not carry over to the private ones, a lucky public draw is
+   expected to land near its config's mean on the private board.
+2. **Among submissions of the same config, the earlier ones win exact ties** under the rules' tie-break.
+3. **If the better of two selected submissions sets a team's private rank, two draws of one config beat one.** Under
+   the normal model the gain is about 0.88 tasks on average.
+
+##### [markdown 15]
+## 8. How to read your own draws
+
+- **Convert your score to tasks** (section 2) and read every difference in tasks.
+- **One draw is ±3.2 tasks (95%).** Two single draws that differ by one or two tasks are not evidence that
+  either config is better.
+- **Count the draws a comparison needs.** To see a true difference 80% of the time with a two-sided 5% t-test, you
+  need about this many draws of each config:
+  - 1 task: 40;
+  - 1.5 tasks: 18;
+  - 2 tasks: 11;
+  - 3 tasks: 6.
+- **Hash your bundle.** Use `files_sha256_of_zip` below and compare its first 8 characters with the table. If your
+  files match a listed file set, its draws are your draws too.
+- **Judge a borrowed config by the mean of its identical draws**, not by the score in its notebook title.
+
+##### [code 16]
+def t_power(n, d, sd):
+    """Power of a two-sided 5% two-sample t-test with n draws per config for a true difference d."""
+    df_t = 2 * n - 2
+    ncp = d / (sd * math.sqrt(2 / n))
+    tc = stats.t.ppf(0.975, df_t)
+    return 1 - stats.nct.cdf(tc, df_t, ncp) + stats.nct.cdf(-tc, df_t, ncp)
+
+
+need = pd.DataFrame({"true difference (tasks)": [1, 1.5, 2, 3]})
+need["draws of EACH config"] = [next(n for n in range(2, 1000) if t_power(n, d, sd_pool) >= 0.80)
+                                for d in need["true difference (tasks)"]]
+print("draws needed to see a real difference 80% of the time (two-sided 5% t-test, SD", HL["sd"] + "):")
+print(need.to_string(index=False))
+for d, n in zip(need["true difference (tasks)"], need["draws of EACH config"]):
+    hl("need" + ("%g" % d).replace(".", "_"), n)
+
+
+def files_sha256(files):
+    """sha256 of json.dumps(FILES, sort_keys=True), where FILES maps each path in the bundle to its text."""
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+
+
+def files_sha256_of_zip(path):
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        return files_sha256({i.filename: z.read(i).decode("utf-8") for i in z.infolist() if not i.is_dir()})
+
+
+known = {s[:8]: c for s, c in zip(G["sha"], G["config"])}
+print("\nexample: files_sha256({'agent.yaml': 'name: demo\\n'}) =", files_sha256({"agent.yaml": "name: demo\n"}))
+print(len(known), "file sets with >= 2 draws can be looked up by the first 8 characters of their files_sha256")
+
+##### [markdown 17]
+## Credits and sources
+
+Every scored public notebook in the table is listed below, by its author's display name, with the number of scored
+versions read. This census exists because these authors published their work.
+
+Sources:
+- Per-version public scores from each notebook's version history.
+- The notebook list from the Kaggle API.
+- The rules quoted in section 7 from the competition's [rules page](https://www.kaggle.com/competitions/gemma-4-developer-agent/rules).
+- The task split from its [data page](https://www.kaggle.com/competitions/gemma-4-developer-agent/data).
+- The board snapshot (2026-10-22 06:35 UTC) from the public leaderboard download, reduced to one row per score.
+
+##### [code 18]
+from IPython.display import Markdown, display
+cr = (pub.groupby(["author", "notebook_ref", "notebook_title"]).size().reset_index(name="scored versions")
+      .sort_values(["author", "notebook_ref"], key=lambda s: s.str.lower()))
+lines = [f"- {a}: [{t}](https://www.kaggle.com/code/{r}) ({n})" for a, r, t, n in cr.itertuples(index=False)]
+display(Markdown("\n".join(lines)))
+print(len(cr), "notebooks by", cr["author"].nunique(), "authors")
+os.makedirs(WORK, exist_ok=True)
+json.dump(HL, open(os.path.join(WORK, "headline.json"), "w"), indent=1, sort_keys=True)
+print("headline.json:", len(HL), "values written for the prose checks")

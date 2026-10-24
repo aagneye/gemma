@@ -1,0 +1,35 @@
+
+##### [markdown 0]
+# Detecting SWE Agent Action Loops with Token-Level Jaccard Similarity
+This notebook analyzes the **SWE Agent Action-Similarity & Loop Recovery Corpus** (`robinamirbahar/swe-agent-action-similarity-loop-recovery-corpus`) and calibrates the decision boundary ($\tau = 0.80$) for **Counterfactual Context Reset (CCR)**.
+
+
+##### [code 1]
+import glob
+import pandas as pd
+import matplotlib.pyplot as plt
+
+paths = glob.glob('/kaggle/input/**/action_similarity_pairs.csv', recursive=True)
+df = pd.read_csv(paths[0])
+display(df)
+
+
+##### [code 2]
+# Evaluate Precision & Recall at threshold tau = 0.80
+tau = 0.80
+preds = (df['jaccard_similarity'] >= tau) & (df['exit_code_t1'] != 0) & (df['exit_code_t2'] != 0)
+accuracy = (preds == df['is_pathological_loop']).mean()
+print(f'Loop Detection Accuracy at tau={tau}: {accuracy*100:.1f}%')
+print(f'Mean CCR Recovery Turns on Loop Pairs: {df[df["is_pathological_loop"]]["ccr_recovery_turns"].mean():.2f} turns')
+
+
+##### [code 3]
+fig, ax = plt.subplots(figsize=(8, 4), dpi=120)
+colors = ['#d95f02' if x else '#1b9e77' for x in df['is_pathological_loop']]
+ax.barh(df['pair_id'], df['jaccard_similarity'], color=colors)
+ax.axvline(0.80, color='black', linestyle='--', label='CCR Trigger Threshold (0.80)')
+ax.set_xlabel('Token-Level Jaccard Similarity J(a_{t-1}, a_t)')
+ax.set_title('Consecutive Tool-Call Jaccard Similarity vs Pathological Loop Ground Truth')
+ax.legend()
+plt.tight_layout()
+plt.show()

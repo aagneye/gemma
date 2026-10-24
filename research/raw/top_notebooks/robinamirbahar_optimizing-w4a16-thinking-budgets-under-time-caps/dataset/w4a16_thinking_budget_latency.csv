@@ -1,0 +1,7 @@
+config_id,model_variant,precision_format,thinking_budget_tokens,max_time_minutes,mean_turn_latency_sec,timeout_abort_rate_pct,task_resolution_rate_pct,vram_peak_gb
+CFG-01,gemma-4-31b-it-bf16,BF16,4096,1,24.8,76.0,20.0,64.2
+CFG-02,gemma-4-31b-it-qat-w4a16-ct,W4A16_QAT,4096,1,18.2,68.0,28.0,19.4
+CFG-03,gemma-4-31b-it-qat-w4a16-ct,W4A16_QAT,2048,3,9.6,8.0,72.0,18.1
+CFG-04,gemma-4-31b-it-qat-w4a16-ct,W4A16_QAT,1024,3,6.4,4.0,64.0,17.6
+CFG-05,gemma-4-31b-it-qat-w4a16-ct,W4A16_QAT,512,3,4.1,0.0,52.0,17.2
+CFG-06,gemma-4-31b-it-fp8,FP8,2048,3,10.2,12.0,68.0,33.8

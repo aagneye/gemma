@@ -1,0 +1,49 @@
+
+##### [markdown 0]
+Below is the leaderboard for the **Small Model Prize** track of this competition. We show only the top 100 teams here, but you may view the full `leaderboard.csv` file in the output data of this notebook for the rest.
+
+To be eligible for the prize, the submission must be one of your two selected submissions (selected either manually or automatically) at the end of the competition. The leaderboard below shows *all* teams with a small model submission. Teams will be dropped from the private leaderboard if they do not have an eligible submission.
+
+##### [code 1]
+with open('/kaggle/input/notebooks/ryanholbrook/gemma-4-small-model-data/last_updated.txt', 'r') as f:
+    print('Last Updated:', f.read())
+--- output ---
+Last Updated: 2026-10-20 19:27 UTC
+
+
+##### [code 2]
+import pandas as pd
+
+pd.options.display.min_rows = 100
+pd.options.display.max_rows = 100
+
+leaderboard = pd.read_csv('/kaggle/input/notebooks/ryanholbrook/gemma-4-small-model-data/leaderboard.csv', index_col='Rank')
+leaderboard.to_csv('leaderboard.csv')
+leaderboard.head(100)
+--- output ---
+                 TeamName  PublicScore
+Rank                                  
+1            NullPointers         0.06
+2                    GZ_F         0.06
+3              Bart Agent         0.06
+4       Luxshan Thavarasa         0.05
+5       Sebastian Brestin         0.05
+6                    kuto         0.05
+7                XuHorace         0.05
+8         Christian Czura         0.03
+9                 Hoai Vo         0.03
+10            prince22466         0.03
+11               EasyHome         0.03
+12               JN Liang         0.03
+13              L godlike         0.03
+14                letit6e         0.03
+15       Isaac Diaz Lopez         0.03
+16            Kerem Ercin         0.03
+17    Maria Carolina BRAY         0.03
+18          Nguyen Duc An         0.03
+19            tzy22101059         0.01
+20             kulshekhar         0.01
+21        Daniil Dushenev         0.01
+22                 Devs01         0.00
+23    Ahmed Sattar Jabbar         0.00
+24           Luv Bhargava         0.00

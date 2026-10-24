@@ -1,0 +1,33 @@
+{
+ "competition": "gemma-4-developer-agent",
+ "read_utc": "2026-10-22 05:51 to 06:26",
+ "notebooks_listed": 274,
+ "version_history_unreadable": [
+  "ayushmldixit1/notebook46419a07d8",
+  "bang1850/notebook67dada2eb5",
+  "littlecow0426/getting-started-gemma-4-developer-agent",
+  "tuynnguynee/notebook057a67b5a8"
+ ],
+ "listing": "kaggle kernels list --competition gemma-4-developer-agent (all pages)",
+ "sources": {
+  "data_page": {
+   "url": "https://www.kaggle.com/competitions/gemma-4-developer-agent/data",
+   "quote": "There are about 120 tasks in the test set, evenly divided between the public and private splits."
+  },
+  "rules_ties": {
+   "url": "https://www.kaggle.com/competitions/gemma-4-developer-agent/rules",
+   "quote": "In the event of a tie, the Submission that was entered first to the Competition will be the winner."
+  },
+  "rules_final": {
+   "url": "https://www.kaggle.com/competitions/gemma-4-developer-agent/rules",
+   "quote": "You may select up to two (2) Final Submissions for judging."
+  },
+  "rules_boards": {
+   "url": "https://www.kaggle.com/competitions/gemma-4-developer-agent/rules",
+   "quote": "The Public Leaderboard will be based on the public test set and the Private Leaderboard will be based on the private test set."
+  },
+  "read": "competition pages read through the Kaggle API (kaggle competitions pages --content) on the census day"
+ },
+ "scores": "per-version public scores from each notebook's public version history",
+ "files_sha256": "sha256 of json.dumps(FILES, sort_keys=True); FILES = the dict of bundle paths -> text that the version's own code writes to submission.zip, resolved statically with ast (bundle_hash.py); nothing executed"
+}

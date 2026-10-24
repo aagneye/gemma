@@ -1,0 +1,11 @@
+pair_id,task_domain,tool_name,command_t1,command_t2,jaccard_similarity,exit_code_t1,exit_code_t2,is_pathological_loop,ccr_recovery_turns
+PAIR-001,Async_Concurrency,run_command,pytest tests/test_pool.py -k test_acquire,pytest tests/test_pool.py -k test_acquire -v,0.857,1,1,True,2
+PAIR-002,Async_Concurrency,run_command,pytest tests/test_event_loop.py,pytest tests/test_event_loop.py -s,0.8,1,1,True,3
+PAIR-003,ORM_Query_Planner,run_command,pytest tests/test_queryset.py -k test_join,pytest tests/test_queryset.py -k test_join --tb=short,0.833,1,1,True,2
+PAIR-004,ORM_Query_Planner,read_file,read_file src/orm/compiler.py 1 120,read_file src/orm/expressions.py 1 120,0.667,0,0,False,0
+PAIR-005,Type_System_Validator,run_command,pytest tests/test_pydantic_v2.py,pytest tests/test_pydantic_v2.py -vv,0.8,1,1,True,2
+PAIR-006,Type_System_Validator,edit_file,edit_file src/validators/schema.py,run_command pytest tests/test_pydantic_v2.py,0.143,0,0,False,0
+PAIR-007,CLI_Parser_Subcommands,run_command,pytest tests/test_cli_args.py -k test_subparser,pytest tests/test_cli_args.py -k test_subparser -q,0.857,2,2,True,1
+PAIR-008,AST_Code_Generator,run_command,pytest tests/test_codegen.py -k test_unparse,pytest tests/test_codegen.py -k test_unparse --maxfail=1,0.857,1,1,True,2
+PAIR-009,AST_Code_Generator,search_similar_code,search_similar_code visit_JoinedStr,read_file src/ast/unparser.py 200 280,0.0,0,0,False,0
+PAIR-010,Async_Concurrency,run_command,pytest tests/test_CancelScope.py -k test_shield,pytest tests/test_CancelScope.py -k test_shield -v,0.857,1,1,True,2

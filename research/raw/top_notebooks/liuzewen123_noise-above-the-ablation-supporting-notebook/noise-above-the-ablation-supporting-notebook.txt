@@ -1,0 +1,166 @@
+
+##### [markdown 0]
+# Noise Above the Ablation — supporting notebook
+
+Companion notebook for the Gemma 4 Developer Agent **Paper Track** submission. It regenerates every number and figure in the writeup directly from the Kaggle submissions API, so all reported values are independently verifiable.
+
+**What it contains**
+1. Pull of all 11 Gemma 4 Developer Agent submissions from this account, with dates, submission refs, public scores and artifact hashes.
+2. The core measurement: three **byte-identical** submissions of one configuration (md5 `1acc6381...`) that scored 0.05 / 0.06 / 0.08.
+3. Figure 1 of the paper — the noise band, plotted against the publicly reported value of the same configuration.
+4. The summary statistics quoted in Section 3 (mean, spread, relative spread).
+
+**Why this notebook exists**
+The writeup's central claim is that single-submission ablations on a stochastic harness are uninterpretable. That claim is only worth anything if the measurement behind it can be re-run. This notebook is the re-run path: change `COMP` to your own competition slug and the same code measures *your* noise band.
+
+> **Reporting note.** Two of the eleven submissions returned **no public score at all**. These are reported as `None` (submission completed, scoring status unknown), never as 0.00 and never dropped. Conflating 'unscored' with 'scored zero' would bias any downstream analysis.
+
+##### [code 1]
+import csv, json
+from kaggle.api.kaggle_api_extended import KaggleApi
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+api = KaggleApi()
+api.authenticate()
+print('authenticated OK')
+
+##### [code 2]
+COMP = 'gemma-4-developer-agent'
+# arm1 = the baseline bundle (md5 1acc6381...). arm2 = arm1 + one skill (md5 73e2252d).
+# The arm2 resubmission of 2026-10-01 quotes arm1's md5 while diffing against it, so a
+# naive substring test would mark it byte-identical. Exclude any description that also
+# carries arm2's hash.
+ARM1, ARM2 = '1acc6381', '73e2252d'
+
+rows = []
+for s in api.competition_submissions(COMP):
+    desc = (s.description or '').replace('\n', ' ').strip()
+    score = None
+    for attr in ('publicScore', 'public_score'):
+        if getattr(s, attr, None) not in (None, ''):
+            score = float(getattr(s, attr))
+            break
+    rows.append({
+        'date': str(s.date)[:10],
+        'ref': s.ref,
+        'score': score,
+        'identical_bytes': 'YES' if (ARM1 in desc and ARM2 not in desc) else '',
+        'description': desc,
+    })
+rows.sort(key=lambda r: r['date'])
+print(f'{len(rows)} submissions pulled from {COMP}')
+
+##### [markdown 3]
+### Table 1 — complete submission log
+
+The `identical_bytes` column marks submissions whose description records the same md5 as the baseline bundle. Those rows are the measurement; everything else is context.
+
+##### [code 4]
+for r in rows:
+    flag = ' <== IDENTICAL BYTES' if r['identical_bytes'] else ''
+    print(f"{r['date']}  ref={str(r['ref']):<10}  score={str(r['score']):>6}{flag}")
+    print(f"           {r['description'][:110]}")
+
+with open('experiments_gemma4.csv', 'w', newline='') as fh:
+    w = csv.DictWriter(fh, fieldnames=['date', 'ref', 'score', 'identical_bytes', 'description'])
+    w.writeheader()
+    w.writerows(rows)
+print('\nwrote experiments_gemma4.csv')
+
+##### [markdown 5]
+### The measurement — byte-identical replicates
+
+Three submissions of the *same* 3,975-byte bundle, on three different days, with no code, configuration, prompt or adapter change. The only thing that varied is the harness's own execution.
+
+##### [code 6]
+reps = [r for r in rows if r['identical_bytes'] and r['score'] is not None]
+scores = [r['score'] for r in reps]
+print('byte-identical replicate scores:', scores)
+
+mean = sum(scores) / len(scores)
+spread = max(scores) - min(scores)
+rel = spread / mean * 100
+print(f'\nmean          = {mean:.4f}')
+print(f'min / max     = {min(scores)} / {max(scores)}')
+print(f'spread        = {spread:.3f}')
+print(f'relative      = {rel:.1f}% of the mean')
+
+REPORTED = 0.12   # the value publicly reported for this configuration by its originator
+print(f'\npublicly reported value for the same configuration: {REPORTED}')
+print('all three replicates fall below it by', round(REPORTED - max(scores), 3), 'or more')
+
+##### [markdown 7]
+### Figure 1 — the noise band
+
+Orange points are byte-identical replicates; blue points are genuinely different configurations. The shaded band is the measured noise floor. The dashed line is the value that was publicly reported for the baseline configuration.
+
+Read the plot this way: any two configurations whose difference is smaller than the width of the orange band cannot be separated by a single submission each.
+
+##### [code 8]
+fig, ax = plt.subplots(figsize=(13, 4.8))
+
+lo, hi = min(scores), max(scores)
+ax.axhspan(lo, hi, color='#e8894a', alpha=0.16, zorder=0)
+ax.text(0.995, (lo + hi) / 2, f'  noise band\n  {lo} – {hi}  (spread {spread:.2f})',
+        transform=ax.get_yaxis_transform(), va='center', ha='right',
+        fontsize=10, color='#a8571f')
+
+ax.axhline(REPORTED, color='#c0392b', ls='--', lw=1.6, zorder=1)
+ax.text(0.02, REPORTED + 0.004, f'publicly reported value for this configuration = {REPORTED}',
+        transform=ax.get_yaxis_transform(), fontsize=10, color='#c0392b')
+
+xs_rep, ys_rep, xs_oth, ys_oth = [], [], [], []
+for i, r in enumerate(rows):
+    if r['score'] is None:
+        continue
+    (xs_rep if r['identical_bytes'] else xs_oth).append(i)
+    (ys_rep if r['identical_bytes'] else ys_oth).append(r['score'])
+
+ax.scatter(xs_oth, ys_oth, s=95, color='#2f6fbd', zorder=3,
+           label='different configuration (one submission each)')
+ax.scatter(xs_rep, ys_rep, s=190, color='#e8894a', edgecolor='#a8571f',
+           linewidth=1.4, zorder=4, marker='D',
+           label='byte-identical replicates (md5 1acc6381)')
+
+for x, y in zip(xs_rep, ys_rep):
+    ax.annotate(f'{y:.2f}', (x, y), textcoords='offset points', xytext=(0, -20),
+                ha='center', fontsize=10, fontweight='bold', color='#a8571f')
+
+ax.set_xticks(range(len(rows)))
+ax.set_xticklabels([r['date'][5:] for r in rows], rotation=45, ha='right', fontsize=9)
+ax.set_ylabel('public leaderboard score')
+ax.set_title('Figure 1. Run-to-run variance of one byte-identical submission on the Gemma 4 Developer Agent harness',
+                fontsize=12, fontweight='bold')
+ax.set_ylim(0, max(max(ys_oth + ys_rep), REPORTED) + 0.035)
+ax.grid(axis='y', alpha=0.25)
+ax.legend(loc='upper left', fontsize=9.5, framealpha=0.9)
+fig.tight_layout()
+fig.savefig('figure1_noise_band.png', dpi=200)
+print('wrote figure1_noise_band.png')
+
+##### [markdown 9]
+### Section 5 arithmetic — the participant protocol
+
+The three-step decision rule proposed in the writeup, applied to this account's own data.
+
+##### [code 10]
+arm2 = [r for r in rows if r['ref'] == 56741914]
+if arm2 and arm2[0]['score'] is not None:
+    s = arm2[0]['score']
+    inside = lo <= s <= hi
+    print(f"arm2 (single-skill intervention) landed at {s}")
+    print(f"noise band is [{lo}, {hi}] -> {'INSIDE' if inside else 'OUTSIDE'} the band")
+    print('verdict:', 'unresolvable at n=1' if inside else 'candidate signal, replicate before claiming')
+else:
+    print('arm2 resubmission returned no public score -> status unknown, reported as such in the writeup')
+
+##### [markdown 11]
+### Limitations (mirrors the writeup)
+
+- **n = 3.** Three replicates size the band's rough width but not its distribution; min/max/spread are reported rather than a parametric sigma, because with n=3 any sigma estimate would be decorative.
+- **One configuration, one window.** The band was measured for one small artifact across five days. Whether variance scales with agent complexity, score region, or harness version is unknown.
+- **Harness opacity.** We cannot exclude that the harness itself changed between replicates. If it did, the 'variance' measured here conflates sampling noise with harness drift — which is arguably the quantity a participant actually faces.
+- **Non-scores.** Two submissions returned empty scores; whether they were scored as zero or unscorable is unknowable from the participant side. They are reported as unknowns, not zeros.
+- **Live leaderboard.** All values are as of the run date. Re-run this notebook to refresh them.

@@ -1,0 +1,803 @@
+
+##### [markdown 0]
+# Does the Code Graph Find the Bug? The harness's graph tools vs plain keyword search for issue localisation
+
+The `swegemma` harness gives your agent three code-graph tools: `search_similar_code`, `get_code_neighbors`
+and `get_code_subgraph`. Each call costs one of a small tool budget (10 in the sample submission). This notebook
+treats them as a **retrieval benchmark**. For every task, the `problem_statement` is the query, and the files
+and symbols the reference `patch` touches are the gold answers. Do the tools surface them, and at what k?
+
+The TL;DR below is filled in automatically from this run's numbers when the notebook finishes.
+
+**Contents:** 1. Framing and questions · 2. Data and gold labels · 3. Validation and leakage · 4. No-retrieval baselines ·
+5. Lexical baselines (BM25, TF-IDF) · 6. The three graph tools · 7. Results by repo · 8. What drives recall ·
+9. Error analysis by segment · 10. Recommendation and next steps
+
+##### [code 1]
+from IPython.display import Markdown, display
+
+TLDR = display(Markdown("**TL;DR**: computing... (this cell updates when the notebook finishes)"), display_id=True)
+
+##### [code 2]
+import json
+import textwrap
+import os
+import re
+from collections import Counter, defaultdict
+from math import exp, lgamma
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+
+SEED = 42
+SAMPLE = os.getenv("SAMPLE") == "1"
+KS = [1, 3, 5, 10, 20, 50]
+K_MAIN = 10            # the harness default k for search_similar_code
+MAX_SEEDS = 5          # identifier seeds per task = tool calls an agent would spend
+MAX_CHARS = 5_000      # harness max_stdout_chars (graph-tool output cap)
+MAX_NEIGHBORS = 50     # get_code_neighbors default
+LOOKUP = "Direct lookup of issue identifiers"  # = get_code_subgraph(seeds): returns only what it is given
+TOOLS = ["search_similar_code · statement", "search_similar_code · identifiers",
+         "get_code_neighbors · statement", "get_code_neighbors · identifiers"]  # discovery tools only
+PALETTE = ["#14182B", "#D9B44A", "#3A6EA5", "#C0504D", "#8A8FA3", "#5B9A68", "#9C6ADE", "#E08E45", "#B07AA1"]
+plt.rcParams.update({"figure.figsize": (10, 5), "axes.spines.top": False, "axes.spines.right": False,
+                     "axes.titleweight": "bold", "axes.prop_cycle": plt.cycler(color=PALETTE)})
+rng = np.random.default_rng(SEED)
+
+##### [code 3]
+def md(text: str) -> None:
+    display(Markdown(text))
+
+
+def find_data() -> Path:
+    roots = [Path("/kaggle/input/gemma-4-developer-agent")]
+    base = Path("/kaggle/input")
+    if base.exists():
+        roots += [p.parent for p in base.glob("*/tasks.jsonl")] + [p.parent for p in base.glob("*/*/tasks.jsonl")]
+    roots.append(Path(os.environ.get("LOCAL_DATA", "../../data")))
+    return next(r for r in roots if (r / "tasks.jsonl").exists())
+
+
+DATA = find_data()
+tasks = pd.read_json(DATA / "tasks.jsonl", lines=True)
+tasks["snapshot"] = tasks.instance_id.str.rsplit("_", n=1).str[0] + "_" + tasks.base_commit
+tasks["has_graph"] = [(DATA / "graphs" / f"{s}.json").exists() and (DATA / "embeddings" / f"{s}.npz").exists()
+                      for s in tasks.snapshot]
+print(f"{len(tasks):,} tasks, {tasks.snapshot.nunique():,} snapshots; graph+embeddings present for "
+      f"{tasks.has_graph.sum():,} tasks (SAMPLE={SAMPLE})")
+print("tasks dropped for lack of a local graph, by repo:",
+      tasks.assign(dropped=~tasks.has_graph).groupby("repo").dropped.sum().to_dict())
+
+##### [markdown 4]
+## 1. Framing and questions
+
+An agent that is handed an issue wants to land in the right file within the first couple of tool calls. So the
+metric is **file recall@k**: the share of the patch's gold files that contain at least one of the top-k returned
+graph nodes. **Symbol recall@k** (the share of gold functions or classes returned) is the stricter companion.
+
+Questions:
+1. How far does a query-free baseline get (random nodes, most-connected nodes)?
+2. How far does plain lexical retrieval over node text get (BM25, TF-IDF)?
+3. How do the three graph tools compare when queried as the harness allows?
+4. Does the answer hold across repos, or is it a FastAPI artefact?
+5. Which tool, and which k, should a system prompt push?
+
+**How the tools are reimplemented** (HARNESS_README §6.3), with each approximation stated:
+- `search_similar_code(query, k)`: there is no query encoder offline. A single-token query resolves to a node
+  through `resolve_node_name`. A multi-word query uses the lexical token-overlap fallback to pick an anchor node.
+  Results are the k nodes most cosine-similar to the anchor, excluding the anchor itself.
+  *Assumptions (not specified in the README):* the anchor is the node whose key tokens overlap the query most
+  (ties go to the shortest key), and ties within a resolution tier also go to the shortest name.
+- `get_code_neighbors(node)`: out-neighbours, then in-neighbours, capped at 50 names and 5,000 characters.
+  *Assumption:* this order (out before in, in edge-list order) is not specified in the README. The seeds
+  themselves are **not** scored, so the tool only gets credit for nodes it actually adds. §6.3 documents no
+  lexical fallback for this tool, so the raw issue text has to resolve through the 4 name tiers (it almost never does).
+- `get_code_subgraph(nodes)`: the induced subgraph returns **only the nodes you pass in**, so it cannot discover
+  anything. Its "recall" is simply what you get by looking up the names the issue mentions. It is therefore
+  reported as a reference line, **Direct lookup of issue identifiers**, and never competes as a graph tool.
+
+The "best graph tool" is picked only among the four **discovery** variants that can return nodes they were not
+given: `search_similar_code` and `get_code_neighbors`, each queried with the raw statement or with identifiers.
+
+The identifier-seeded variants mimic what the sample system prompt asks an agent to do: pull up to 5 code-like
+identifiers out of the issue (backticked spans, `snake_case`, `CamelCase`, dotted paths, `.py` paths) and spend one
+call on each.
+
+##### [markdown 5]
+## 2. Data and gold labels
+
+The gold labels come from the `patch` only (never `test_patch`). Each changed file maps to a graph module by
+matching the longest dotted suffix of its path against the graph's module names. For example, `docs_src/` is
+stripped in the FastAPI graphs. Each node's module is its longest dotted prefix that is not itself a node.
+Gold symbols are the nodes in a gold module whose text contains a removed line. For pure insertions, the
+surrounding context lines stand in. A line that appears in more than 3 nodes counts as generic and is ignored.
+New files (`--- /dev/null`) cannot be retrieved from the pre-fix graph, so they are excluded from the denominators
+and counted separately.
+
+##### [code 6]
+FILE_RE = re.compile(r"^--- (a/(\S+)|/dev/null)\n\+\+\+ (b/(\S+)|/dev/null)\n", re.M)
+FUNC_RE = re.compile(r"(?:def|class)\s+(\w+)")
+
+
+def changed_blocks(body: list[str]) -> list[str]:
+    """Old-side anchor lines: removed lines, or the context around a pure insertion."""
+    anchors, i = [], 0
+    is_change = lambda s: bool(s) and s[0] in "+-"
+    while i < len(body):
+        if not is_change(body[i]) or body[i].startswith("@@"):
+            i += 1
+            continue
+        j = i
+        while j < len(body) and is_change(body[j]):
+            j += 1
+        minus = [b[1:] for b in body[i:j] if b.startswith("-")]
+        ctx = [body[k][1:] for k in [*range(i - 2, i), *range(j, j + 2)] if 0 <= k < len(body) and body[k][:1] == " "]
+        anchors += minus or ctx
+        i = j
+    return [a.strip() for a in anchors if len(a.strip()) >= 8]
+
+##### [code 7]
+def parse_patch(patch: str) -> dict:
+    """{path: (anchor_lines, hunk_funcs)}; new files map to None."""
+    out, ms = {}, list(FILE_RE.finditer(patch))
+    for m, nxt in zip(ms, ms[1:] + [None]):
+        body = patch[m.end(): nxt.start() if nxt else len(patch)].split("\n")
+        if m.group(2) is None:
+            out[m.group(4)] = None
+            continue
+        funcs = [f for ln in body if ln.startswith("@@") for f in FUNC_RE.findall(ln.split("@@")[-1])]
+        out[m.group(2)] = (changed_blocks(body), funcs)
+    return out
+
+##### [code 8]
+def toks(s: str) -> list[str]:
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", s)
+    return [t for t in re.findall(r"[a-z0-9]+", s.lower()) if len(t) > 2]
+
+
+def module_of(name: str, nodeset: set) -> str:
+    parts = name.split(".")
+    for j in range(len(parts) - 1, 0, -1):
+        if ".".join(parts[:j]) not in nodeset:
+            return ".".join(parts[:j])
+    return parts[0]
+
+
+def file_module(path: str, modules: set) -> str | None:
+    if not path.endswith(".py"):
+        return None
+    parts = path[:-3].split("/")
+    parts = parts[:-1] if parts[-1] == "__init__" else parts
+    return next((".".join(parts[i:]) for i in range(len(parts)) if ".".join(parts[i:]) in modules), None)
+
+##### [code 9]
+def load_snapshot(snap: str) -> dict:
+    g = json.loads((DATA / "graphs" / f"{snap}.json").read_text(encoding="utf-8"))
+    names = [n["name"] for n in g["nodes"]]
+    texts = [n.get("text") or "" for n in g["nodes"]]
+    idx = {n: i for i, n in enumerate(names)}
+    out_adj, in_adj = defaultdict(list), defaultdict(list)
+    for e in g["edges"]:
+        s, t = idx.get(e["source"]), idx.get(e["target"])
+        if s is not None and t is not None:
+            out_adj[s].append(t)
+            in_adj[t].append(s)
+    z = np.load(DATA / "embeddings" / f"{snap}.npz")
+    keys = set(z.files)
+    E = np.stack([z[n] if n in keys else np.zeros(256, np.float32) for n in names]).astype(np.float32)
+    E /= np.linalg.norm(E, axis=1, keepdims=True).clip(1e-9)
+    nodeset = set(names)
+    module = [module_of(n, nodeset) for n in names]
+    return dict(names=names, texts=texts, idx=idx, out=out_adj, inn=in_adj, E=E, module=module,
+                modules=set(module), lines=[{ln.strip() for ln in t.split("\n")} for t in texts])
+
+##### [code 10]
+def gold_for(patch: str, S: dict) -> dict:
+    parsed = parse_patch(patch)
+    new = sum(v is None for v in parsed.values())
+    mods, syms, unmapped, mapped = set(), set(), 0, 0
+    for path, v in parsed.items():
+        mod = file_module(path, S["modules"]) if v is not None else None
+        if v is None:
+            continue
+        if mod is None:
+            unmapped += path.endswith(".py")
+            continue
+        mods.add(mod)
+        mapped += 1
+        cand = [i for i, m in enumerate(S["module"]) if m == mod]
+        found = set()
+        for a in v[0]:
+            hits = [i for i in cand if a in S["lines"][i]]
+            if 1 <= len(hits) <= 3:
+                found.add(min(hits, key=lambda i: len(S["texts"][i])))
+        if not found:  # fall back on git's hunk-header function names
+            found = {i for i in cand if S["names"][i].rsplit(".", 1)[-1] in v[1]}
+        syms |= found
+    return dict(gold_mods=mods, gold_syms=syms, n_new=new, n_unmapped=unmapped, n_mapped=mapped, n_files=len(parsed))
+
+##### [markdown 11]
+## 3. Validation and leakage
+
+Nothing is trained on the gold labels except the BM25 hyper-parameters (k1, b). These are tuned with
+**leave-one-repo-out** CV. Grouping by repo, not by task, matters for three reasons:
+- Two pairs of tasks share a `base_commit` (`rich_3882`/`rich_3894`, `requests_6629`/`requests_6589`), so they
+  share one graph.
+- Snapshots of the same repo at nearby commits are near-identical graphs, so a task-level split would let the
+  tuner see the test repo.
+- `encode/httpx` has a single task, so it is folded into the `psf/requests` group (both HTTP clients). This is
+  conservative: it merges groups and never splits one.
+
+Every result is reported as the **mean ± std across repo groups**, not across tasks, so FastAPI's 67 tasks cannot
+dominate. With only 3 groups, the std is descriptive (how much repos disagree), not a confidence interval. The gold labels never feed the queries. The graph is the pre-fix snapshot, so it contains no future code.
+The remaining leak is in the issue text itself: some PR descriptions name the very function they change. Section 9
+splits the results on exactly that.
+
+##### [code 12]
+URL_RE = re.compile(r"https?://\S+|<!--.*?-->", re.S)
+IDENT_RE = re.compile(r"[A-Za-z_][\w./]*\w")
+NOT_CODE = {"GitHub", "JavaScript", "TypeScript", "YouTube", "macOS", "PyPI", "PyCharm", "VSCode"}
+
+
+def identifiers(text: str) -> list[str]:
+    text = URL_RE.sub(" ", text)
+    ticked = {t for span in re.findall(r"`([^`\n]{3,120})`", text) for t in IDENT_RE.findall(span)}
+    keep = []
+    for c in sorted(IDENT_RE.findall(text), key=lambda c: c not in ticked):  # backticked first, stable order
+        c = c.strip("./")
+        c = c[:-3].replace("/", ".") if c.endswith(".py") else c
+        code_like = "_" in c or "." in c or re.search(r"[a-z][A-Z]|[A-Z]{2,}[a-z]", c)
+        if "/" in c or len(c) < 4 or c in keep or c in NOT_CODE or re.fullmatch(r"v?\d[\w.]*|e\.g|i\.e|_+[a-z]+_+", c):
+            continue
+        if code_like or c in ticked:
+            keep.append(c)
+    return keep
+
+
+def resolve(q: str, S: dict) -> int | None:
+    """resolve_node_name: exact -> ./;// suffix -> case-insensitive -> substring (ties: shortest name)."""
+    if q in S["idx"]:
+        return S["idx"][q]
+    ql = q.lower()
+    for test in (lambda n: n.endswith(("." + q, ";" + q, "/" + q)), lambda n: n.lower() == ql, lambda n: q in n):
+        hits = [i for i, n in enumerate(S["names"]) if test(n)]
+        if hits:
+            return min(hits, key=lambda i: len(S["names"][i]))
+    return None
+
+##### [code 13]
+def seeds_for(statement: str, S: dict) -> list[int]:
+    seeds = []
+    for c in identifiers(statement):
+        i = resolve(c, S)
+        if i is not None and i not in seeds:
+            seeds.append(i)
+        if len(seeds) == MAX_SEEDS:
+            break
+    return seeds
+
+
+def round_robin(lists: list[list[int]], head: list[int] = (), cap: int = max(KS)) -> list[int]:
+    out = list(dict.fromkeys(head))
+    for row in zip(*[lst + [None] * (cap - len(lst)) for lst in lists] or [[]]):
+        out += [i for i in row if i is not None and i not in out]
+    return out[:cap]
+
+##### [code 14]
+def cosine_top(i: int, S: dict, k: int = max(KS)) -> list[int]:
+    sims = S["E"] @ S["E"][i]
+    sims[i] = -np.inf
+    return list(np.argsort(-sims)[:k])
+
+
+def neighbors(i: int, S: dict) -> list[int]:
+    nb, chars = [], 0
+    for j in dict.fromkeys(S["out"][i] + S["inn"][i]):
+        chars += len(S["names"][j]) + 4
+        if len(nb) == MAX_NEIGHBORS or chars > MAX_CHARS:
+            break
+        nb.append(j)
+    return nb
+
+##### [markdown 15]
+## 4. No-retrieval baselines
+
+Two query-free baselines come first. **Random k** is the *analytic* expected recall of k nodes drawn uniformly
+without replacement: a gold module with n of N nodes is hit with probability 1 − C(N−n, k)/C(N, k), and a gold
+symbol with probability k/N. **Degree prior** returns the most-connected nodes in the call graph, the same list for
+every task. Any tool that cannot beat these is not reading the issue.
+
+##### [code 16]
+def p_miss(N: int, n: int, k: int) -> float:
+    """P(k draws without replacement from N miss all n targets) = C(N-n, k) / C(N, k)."""
+    if n == 0:
+        return 1.0
+    if N - n < k:
+        return 0.0
+    return exp(lgamma(N - n + 1) - lgamma(N - n - k + 1) - lgamma(N + 1) + lgamma(N - k + 1))
+
+
+def random_expected(g: dict, S: dict, k: int) -> dict:
+    N, size = len(S["names"]), Counter(S["module"])
+    return {"file_recall": float(np.mean([1 - p_miss(N, size[m], k) for m in g["gold_mods"]])),
+            "sym_recall": min(k, N) / N if g["gold_syms"] else np.nan,
+            "hit": 1 - p_miss(N, sum(size[m] for m in g["gold_mods"]), k)}
+
+
+def degree_rank(S: dict) -> list[int]:
+    deg = np.array([len(S["out"][i]) + len(S["inn"][i]) for i in range(len(S["names"]))])
+    return list(np.argsort(-deg, kind="stable")[: max(KS)])
+
+##### [markdown 17]
+## 5. Lexical baselines (BM25, TF-IDF)
+
+Both baselines index every node as `name + text`, using the same camelCase- and snake_case-splitting tokenizer,
+and query with the raw `problem_statement`. This is roughly what a strong `grep`-style search over the graph would
+give an agent. The BM25 grid (k1 × b) and the field ablation (name only, text only, both) are kept for sections 7 and 8.
+
+##### [code 18]
+BM25_GRID = [(k1, b) for k1 in (0.6, 1.2, 2.0) for b in (0.25, 0.5, 0.75, 1.0)]
+FIELDS = {"name": lambda S: [" ".join(n.split(".")) for n in S["names"]], "text": lambda S: S["texts"],
+          "both": lambda S: [n.replace(".", " ") + " " + t for n, t in zip(S["names"], S["texts"])]}
+
+
+def bm25_index(docs: list[str]) -> dict:
+    cv = CountVectorizer(tokenizer=toks, lowercase=False, token_pattern=None)
+    X = cv.fit_transform(docs).tocsc().astype(np.float32)
+    df = np.diff(X.indptr)
+    idf = np.log(1 + (X.shape[0] - df + 0.5) / (df + 0.5))
+    return dict(cv=cv, X=X, idf=idf, dl=np.asarray(X.sum(1)).ravel())
+
+
+def bm25_rank(ix: dict, query: str, k1: float = 1.2, b: float = 0.75) -> list[int]:
+    cols = np.unique(ix["cv"].transform([query]).indices)
+    if len(cols) == 0:
+        return []
+    tf = ix["X"][:, cols].toarray()
+    norm = k1 * (1 - b + b * ix["dl"] / max(ix["dl"].mean(), 1e-9))
+    scores = (tf * (k1 + 1) / (tf + norm[:, None])) @ ix["idf"][cols]
+    return list(np.argsort(-scores, kind="stable")[: max(KS)])
+
+
+def tfidf_rank(S: dict, query: str) -> list[int]:
+    tv = TfidfVectorizer(tokenizer=toks, lowercase=False, token_pattern=None, sublinear_tf=True)
+    X = tv.fit_transform(FIELDS["both"](S))
+    scores = (X @ tv.transform([query]).T).toarray().ravel()
+    return list(np.argsort(-scores, kind="stable")[: max(KS)])
+
+##### [markdown 19]
+## 6. The three graph tools
+
+Each method below returns a ranked list of up to 50 node indices per task. Identifier seeds are shared across the
+three identifier-based variants, so the comparison is apples to apples: same seeds, same number of calls.
+
+##### [code 20]
+def search_statement(S: dict, query: str, name_ix: dict) -> list[int]:
+    """search_similar_code(problem_statement): lexical fallback picks an anchor, then cosine top-k."""
+    q = np.zeros(name_ix["X"].shape[1], np.float32)
+    q[np.unique(name_ix["cv"].transform([query]).indices)] = 1
+    overlap = (name_ix["X"] > 0).astype(np.float32) @ q
+    if overlap.max() <= 0:
+        return []
+    anchor = int(np.argmax(overlap - 1e-3 * name_ix["dl"]))  # most overlap, shortest key on ties
+    return cosine_top(anchor, S)
+
+
+def neighbors_statement(S: dict, statement: str) -> list[int]:
+    """get_code_neighbors(problem_statement): no lexical fallback in §6.3, so only the 4 name tiers can resolve it."""
+    i = resolve(statement.strip(), S)
+    return [] if i is None else neighbors(i, S)
+
+
+def methods_for(S: dict, statement: str, ixs: dict) -> tuple[dict, list[int]]:
+    seeds = seeds_for(statement, S)
+    return {
+        "Degree prior (no query)": degree_rank(S),
+        "BM25 · statement": bm25_rank(ixs["both"], statement),
+        "TF-IDF · statement": tfidf_rank(S, statement),
+        "search_similar_code · statement": search_statement(S, statement, ixs["name"]),
+        "search_similar_code · identifiers": round_robin([cosine_top(s, S) for s in seeds]),
+        "get_code_neighbors · statement": neighbors_statement(S, statement),
+        "get_code_neighbors · identifiers": round_robin([[j for j in neighbors(s, S) if j not in seeds] for s in seeds]),
+        LOOKUP: list(seeds),
+    }, seeds
+
+##### [code 21]
+def score(rank: list[int], g: dict, S: dict, k: int) -> dict:
+    top = rank[:k]
+    got_mods = {S["module"][i] for i in top}
+    fr = len(got_mods & g["gold_mods"]) / len(g["gold_mods"])
+    sr = len(set(top) & g["gold_syms"]) / len(g["gold_syms"]) if g["gold_syms"] else np.nan
+    return {"file_recall": fr, "sym_recall": sr, "hit": float(fr > 0)}
+
+
+def names_gold(statement: str, g: dict, S: dict) -> bool:
+    shorts = {S["names"][i].rsplit(".", 1)[-1] for i in g["gold_syms"]}  # symbol names only, not module names
+    shorts = {s for s in shorts if len(s) >= 4 and not s.startswith("__")}
+    return any(re.search(rf"\b{re.escape(s)}\b", statement) for s in shorts)
+
+
+GROUP = {"fastapi/fastapi": "fastapi", "Textualize/rich": "rich", "psf/requests": "requests+httpx",
+         "encode/httpx": "requests+httpx"}
+todo = tasks[tasks.has_graph]
+if SAMPLE:
+    todo = todo[todo.snapshot.isin(todo.snapshot.drop_duplicates().head(5))]
+print(f"evaluating {len(todo):,} tasks over {todo.snapshot.nunique():,} snapshots")
+
+##### [code 22]
+rows, task_rows, grid_rows, field_rows = [], [], [], []
+for snap, grp in todo.groupby("snapshot", sort=False):
+    S = load_snapshot(snap)
+    ixs = {f: bm25_index(fn(S)) for f, fn in FIELDS.items()}
+    for t in grp.itertuples():
+        g = gold_for(t.patch, S)
+        base = dict(instance_id=t.instance_id, group=GROUP.get(t.repo, t.repo))
+        task_rows.append({**base, **{k: v for k, v in g.items() if k.startswith("n_")}, "n_gold_files": len(g["gold_mods"]),
+                          "n_gold_syms": len(g["gold_syms"]), "statement_len": len(t.problem_statement),
+                          "scored": False, "names_gold": False, "no_anchor": False, "n_seeds": 0})
+        if not g["gold_mods"]:
+            continue
+        ranks, seeds = methods_for(S, t.problem_statement, ixs)
+        task_rows[-1].update(n_seeds=len(seeds), names_gold=names_gold(t.problem_statement, g, S), scored=True,
+                             no_anchor=len(ranks["search_similar_code · statement"]) == 0)
+        rows += [{**base, "method": "Random k (no retrieval)", "k": k, **random_expected(g, S, k)} for k in KS]
+        for m, r in ranks.items():
+            rows += [{**base, "method": m, "k": k, **score(r, g, S, k)} for k in KS]
+        for k1, b in BM25_GRID:
+            r = bm25_rank(ixs["both"], t.problem_statement, k1, b)
+            grid_rows += [{**base, "k1": k1, "b": b, "k": k, **score(r, g, S, k)} for k in KS]
+        for f in FIELDS:
+            field_rows.append({**base, "field": f, **score(bm25_rank(ixs[f], t.problem_statement), g, S, K_MAIN)})
+res, tk = pd.DataFrame(rows), pd.DataFrame(task_rows)
+grid, fields = pd.DataFrame(grid_rows), pd.DataFrame(field_rows)
+print(f"scored {res.instance_id.nunique():,} of {len(tk):,} tasks; {len(res):,} metric rows")
+
+##### [markdown 23]
+### Gold-label coverage
+
+Before scoring anything, check how much of each patch is retrievable at all from the pre-fix graph.
+
+##### [code 24]
+cov = pd.Series({"Patched .py files mapped to a graph module": tk.n_mapped.sum(), "New files (not in graph)": tk.n_new.sum(),
+                 "Unmapped .py files": tk.n_unmapped.sum(),
+                 "Non-.py files": (tk.n_files - tk.n_mapped - tk.n_new - tk.n_unmapped).sum()})
+ax = cov.sort_values().plot.barh(color=[PALETTE[4], PALETTE[3], PALETTE[1], PALETTE[2]])
+ax.set(title=f"{cov.iloc[0] / max(cov.sum(), 1):.0%} of patched files are retrievable from the pre-fix graph",
+       xlabel="Files across all evaluated patches (count)", ylabel="")
+plt.tight_layout()
+plt.show()
+md(f"**Takeaway:** {int(cov.iloc[0]):,} of {int(cov.sum()):,} patched files ({cov.iloc[0] / max(cov.sum(), 1):.0%}) map to a "
+   f"graph module. {int(tk.scored.sum()):,} of {len(tk):,} tasks have at least "
+   f"one retrievable gold file and are scored. The median scored task has "
+   f"{tk[tk.n_gold_files > 0].n_gold_files.median():.0f} gold module(s) and {tk[tk.n_gold_files > 0].n_gold_syms.median():.0f} "
+   "gold symbol(s).")
+
+##### [markdown 25]
+## 7. Results by repo
+
+### The banner chart: file recall@k for every method
+
+##### [code 26]
+def by_group(df: pd.DataFrame, keys: list[str], metric: str = "file_recall") -> pd.DataFrame:
+    """Mean per repo group first, then mean ± std across groups."""
+    per = df.groupby(keys + ["group"])[metric].mean().reset_index()
+    return per.groupby(keys)[metric].agg(["mean", "std"]).reset_index()
+
+
+ORDER = list(res.method.drop_duplicates())
+COLOR = dict(zip(ORDER, PALETTE))
+curve = by_group(res, ["method", "k"])
+best_tool = curve[(curve.k == K_MAIN) & curve.method.isin(TOOLS)].sort_values("mean").iloc[-1]  # in-sample pick
+lookup_10 = curve[(curve.k == K_MAIN) & (curve.method == LOOKUP)]["mean"].iloc[0]
+PRIOR, LEXS = "Degree prior (no query)", ["BM25 · statement", "TF-IDF · statement"]
+per10 = res[res.k == K_MAIN].groupby(["method", "group"])[["file_recall", "sym_recall"]].mean()
+
+
+def m10(m: str, metric: str = "file_recall") -> float:
+    return per10.loc[m, metric].mean()
+
+
+def verdict(a: str, b: str) -> str:
+    """'beats' / 'roughly ties with' / 'trails': a gap < 5 points, or within the std of per-group gaps, is a tie."""
+    d = per10.loc[a, "file_recall"] - per10.loc[b, "file_recall"]
+    sd = d.std() if len(d) > 1 else 0.0
+    if abs(d.mean()) < 0.05 or abs(d.mean()) <= sd:
+        return "roughly ties with"
+    return "beats" if d.mean() > 0 else "trails"
+
+##### [code 27]
+bt, z = best_tool.method, best_tool["mean"]
+lex = max(LEXS, key=m10)
+LEXNAME = lex.split(" · ")[0]
+lex_v, prior_v, look_v = (verdict(m, bt) for m in (lex, PRIOR, LOOKUP))
+if lex_v == "beats":
+    head = (f"Keyword search over node text ({LEXNAME}, {m10(lex):.0%})"
+            + (f" and even a no-query most-connected-nodes prior ({m10(PRIOR):.0%}) beat" if prior_v == "beats" else " beats")
+            + f" every graph tool (best: `{bt}`, {z:.0%}) at k={K_MAIN}")
+elif prior_v == "beats":
+    head = f"A no-query most-connected-nodes prior ({m10(PRIOR):.0%}) beats every graph tool (best: `{bt}`, {z:.0%}) at k={K_MAIN}"
+else:
+    head = (f"The best graph tool (`{bt}`, {z:.0%}) {'beats' if lex_v == 'trails' else 'roughly ties with'} keyword search "
+            f"over node text ({LEXNAME}, {m10(lex):.0%}) at k={K_MAIN}")
+sym_t = [m10(m, "sym_recall") for m in TOOLS]
+sym = (f"on exact symbols, {LEXNAME} finds {m10(lex, 'sym_recall'):.0%} against {np.nanmin(sym_t):.0%}–{np.nanmax(sym_t):.0%} "
+       "for the graph tools")
+look = f"Looking up the issue's identifiers directly ({lookup_10:.0%}) {look_v} the best graph tool"
+hub = ("Hypothesis: a query-free hub prior does this well because gold edits concentrate in hub modules (the most-called "
+       "code), so file recall partly rewards popularity. Read recall as reach, not usefulness."
+       if prior_v != "trails" else "The query-free prior trails the best tool, so the tools are reading the issue.")
+print(head + ";", sym)
+
+##### [code 28]
+fig, ax = plt.subplots(figsize=(11, 5.5))
+for m in ORDER:
+    c = curve[curve.method == m]
+    ax.plot(c.k, c["mean"], marker="o", label=m, color=COLOR[m], lw=2.6 if m in (best_tool.method, LOOKUP) else 1.4,
+            ls=":" if m == LOOKUP else "--" if "no " in m else "-")
+ax.set_xscale("log")
+ax.set_xticks(KS, [str(k) for k in KS])
+ax.set(xlabel="k (nodes returned, log scale)", ylabel="File recall@k (share of gold files hit)", ylim=(0, 1.02),
+       title=textwrap.fill(head, 85))
+ax.legend(fontsize=8, frameon=False, loc="upper left")
+plt.tight_layout()
+plt.show()
+bm = curve[(curve.method == "BM25 · statement") & (curve.k == K_MAIN)]["mean"].iloc[0]
+md(f"**Takeaway:** {head}; {sym}. {look} (dotted line, flat after ≤ {MAX_SEEDS} nodes). Random nodes reach "
+   f"{curve[(curve.method == 'Random k (no retrieval)') & (curve.k == K_MAIN)]['mean'].iloc[0]:.0%}.")
+
+##### [markdown 29]
+### Results table (mean ± std across repo groups)
+
+The BM25 row tuned with leave-one-repo-out CV is added here. For each held-out repo group, (k1, b) is chosen
+to maximise file recall@10 on the other groups, then scored on the held-out one.
+
+##### [code 30]
+def loro_bm25(grid: pd.DataFrame) -> pd.DataFrame:
+    groups, out = grid.group.unique(), []
+    for held in groups:
+        train = grid[(grid.group != held) & (grid.k == K_MAIN)]
+        if train.empty:  # a single group cannot be cross-validated; fall back to the default (1.2, 0.75)
+            k1, b = 1.2, 0.75
+        else:
+            k1, b = train.groupby(["k1", "b"]).file_recall.mean().idxmax()
+        test = grid[(grid.group == held) & (grid.k1 == k1) & (grid.b == b)]
+        out.append(test.assign(method=f"BM25 · tuned LORO", chosen=f"k1={k1}, b={b}"))
+    return pd.concat(out)
+
+
+tuned = loro_bm25(grid)
+allres = pd.concat([res, tuned[res.columns]])
+tab = {}
+for metric in ["file_recall", "sym_recall", "hit"]:
+    t_ = by_group(allres[allres.k.isin([5, K_MAIN, 20])], ["method", "k"], metric)
+    t_["cell"] = [f"{m:.3f} ± {s:.3f}" if pd.notna(s) else f"{m:.3f}" for m, s in zip(t_["mean"], t_["std"])]
+    tab[metric] = t_.pivot(index="method", columns="k", values="cell")
+table = pd.concat(tab, axis=1).reindex(ORDER + ["BM25 · tuned LORO"])
+print("LORO choices:", dict(tuned.groupby("group").chosen.first()))
+table
+
+##### [code 31]
+r10 = by_group(allres[allres.k == K_MAIN], ["method"]).set_index("method").reindex(ORDER + ["BM25 · tuned LORO"])
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.barh(r10.index[::-1], r10["mean"][::-1], xerr=r10["std"].fillna(0)[::-1], capsize=3,
+        color=[COLOR.get(m, PALETTE[7]) for m in r10.index[::-1]])
+for y, v in enumerate(r10["mean"][::-1]):
+    ax.text(v + 0.01, y, f"{v:.0%}", va="center", fontsize=9)
+ax.set(xlabel=f"File recall@{K_MAIN} (mean across repo groups; bars = ±1 std)", xlim=(0, 1.1),
+       title=f"At k={K_MAIN}, {r10['mean'].idxmax()} leads with {r10['mean'].max():.0%} file recall")
+plt.tight_layout()
+plt.show()
+md(f"**Takeaway:** the no-query degree prior ({m10(PRIOR):.0%}) {prior_v} the best graph tool ({z:.0%}). {hub} "
+   "Direct lookup is what `get_code_subgraph` scores by construction: it returns only the nodes passed in.")
+
+##### [markdown 32]
+### Selection effect: is the "best tool" pick honest?
+
+`best_tool` and its k are picked on the same tasks they are reported on, so its in-sample number is optimistic.
+The check below re-picks the tool with leave-one-repo-out: choose on two groups, score on the third.
+
+##### [code 33]
+def loro_tool(res: pd.DataFrame) -> pd.DataFrame:
+    at, out = res[(res.k == K_MAIN) & res.method.isin(TOOLS)], []
+    for held in at.group.unique():
+        tr = at[at.group != held]
+        pick = (tr if not tr.empty else at).groupby("method").file_recall.mean().idxmax()
+        out.append({"held_out": held, "picked": pick, "honest": not tr.empty,
+                    "file_recall": at[(at.group == held) & (at.method == pick)].file_recall.mean()})
+    return pd.DataFrame(out)
+
+
+lt = loro_tool(res)
+print(lt.to_string(index=False))
+md(f"In-sample, `{best_tool.method}` scores {best_tool['mean']:.0%}. With the tool re-picked leave-one-repo-out, the "
+   f"held-out mean is {lt.file_recall.mean():.0%} across {len(lt)} group(s)"
+   + ("." if lt.honest.all() else ". There is a single group here, so this is not a real held-out check (local sample).")
+   + " The k chosen in §9 is read off the in-sample curve, so treat it as a guide, not a tuned value.")
+
+##### [markdown 34]
+### Does it hold across repos?
+
+##### [code 35]
+heat = res[res.k == K_MAIN].groupby(["method", "group"]).file_recall.mean().unstack().reindex(ORDER)
+fig, ax = plt.subplots(figsize=(8, 5))
+im = ax.imshow(heat.values, cmap="cividis", vmin=0, vmax=1, aspect="auto")
+ax.set_xticks(range(heat.shape[1]), heat.columns)
+ax.set_yticks(range(heat.shape[0]), heat.index, fontsize=8)
+for (y, x), v in np.ndenumerate(heat.values):
+    ax.text(x, y, "–" if np.isnan(v) else f"{v:.0%}", ha="center", va="center", color="white" if v < 0.6 else "black")
+spread = (heat.max(axis=1) - heat.min(axis=1))
+ax.set(xlabel="Repo group", title=f"File recall@{K_MAIN} by repo: widest spread is {spread.max():.0%} ({spread.idxmax()})")
+fig.colorbar(im, label=f"File recall@{K_MAIN}")
+plt.tight_layout()
+plt.show()
+rank_sd = heat.rank(ascending=False).std(axis=1).max() if heat.shape[1] > 1 else np.nan
+stability = ("not testable with a single repo group (local sample)" if np.isnan(rank_sd)
+           else "stable (max rank std < 1.5)" if rank_sd < 1.5 else f"not stable (max rank std {rank_sd:.1f})")
+md(f"**Takeaway:** across {heat.shape[1]} repo group(s), the stability of the method ranking at k={K_MAIN} is {stability}. The largest "
+   f"repo-to-repo swing is {spread.max():.0%} for `{spread.idxmax()}`, which is why every headline number is repo-grouped.")
+
+##### [markdown 36]
+## 8. What drives recall
+
+This is the retrieval analogue of feature importance. Which part of a node, its **name** or its **text**, carries
+the signal for BM25? And how sensitive is BM25 to (k1, b)?
+
+##### [code 37]
+fimp = by_group(fields, ["field"]).set_index("field").reindex(["name", "text", "both"])
+gsens = by_group(grid[grid.k == K_MAIN], ["k1", "b"])
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+axes[0].bar(fimp.index, fimp["mean"], yerr=fimp["std"].fillna(0), capsize=4, color=PALETTE[2])
+axes[0].set(ylabel=f"BM25 file recall@{K_MAIN}", xlabel="Indexed field",
+            title=(f"Indexed field moves BM25 by {fimp['mean'].max() - fimp['mean'].min():.0%}; best: {fimp['mean'].idxmax()}"
+                   if fimp["mean"].max() - fimp["mean"].min() >= 0.05 else
+                   f"Indexed field barely matters (spread {fimp['mean'].max() - fimp['mean'].min():.0%})"))
+piv = gsens.pivot(index="k1", columns="b", values="mean")
+im = axes[1].imshow(piv.values, cmap="cividis", vmin=0, vmax=1)
+axes[1].set_xticks(range(piv.shape[1]), piv.columns)
+axes[1].set_yticks(range(piv.shape[0]), piv.index)
+for (y, x), v in np.ndenumerate(piv.values):
+    axes[1].text(x, y, f"{v:.0%}", ha="center", va="center", color="white" if v < 0.6 else "black")
+axes[1].set(xlabel="b (length normalisation)", ylabel="k1 (tf saturation)",
+            title=f"(k1, b) moves recall by {piv.values.max() - piv.values.min():.0%}")
+plt.tight_layout()
+plt.show()
+fl = " · ".join(f"`{f}` {v:.0%}" for f, v in fimp["mean"].items())
+md(f"**Takeaway:** BM25 file recall@{K_MAIN} by indexed field: {fl}. The whole (k1, b) grid spans only "
+   f"{piv.values.max() - piv.values.min():.0%}, against {fimp['mean'].max() - fimp['mean'].min():.0%} for the choice of field: "
+   + ("what you index matters more than tuning." if fimp["mean"].max() - fimp["mean"].min() > piv.values.max() - piv.values.min()
+      else "tuning matters at least as much as what you index."))
+
+##### [markdown 38]
+## 9. Error analysis by segment
+
+Where do the graph tools fail? The tasks are split along three axes:
+- **Issue names the gold symbol or module** (the text-side leak) versus not.
+- **Seeds found**: 0 identifiers resolved versus ≥ 1.
+- **Patch size**: 1 gold file versus several.
+
+##### [code 39]
+seg = tk[tk.scored.astype(bool)].copy()
+seg["Issue names gold"] = np.where(seg.names_gold.astype(bool), "names gold", "does not")
+seg["Seeds resolved"] = np.where(seg.n_seeds > 0, "≥1 seed", "0 seeds")
+seg["Gold files"] = np.where(seg.n_gold_files > 1, "2+ files", "1 file")
+
+##### [code 40]
+focus = list(dict.fromkeys([best_tool.method, LOOKUP, "BM25 · statement"]))
+r = res[(res.k == K_MAIN) & res.method.isin(focus)].merge(seg, on=["instance_id", "group"])
+fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), sharey=True)
+for ax, col in zip(axes, ["Issue names gold", "Seeds resolved", "Gold files"]):
+    p = r.groupby([col, "method"]).file_recall.mean().unstack().reindex(columns=list(dict.fromkeys(focus)))
+    p.plot.bar(ax=ax, rot=0, color=[COLOR[m] for m in p.columns], legend=ax is axes[0])
+    n = seg[col].value_counts()
+    ax.set_xticks(range(len(p)), [f"{i}\n(n={n.get(i, 0)})" for i in p.index])
+    ax.set(xlabel="", ylabel=f"File recall@{K_MAIN}", title=col)
+axes[0].legend(fontsize=7, frameon=False)
+gap = r[r.method == best_tool.method].groupby("Issue names gold").file_recall.mean()
+diff = gap.get("names gold", np.nan) - gap.get("does not", np.nan)
+fig.suptitle(f"Naming the code in the issue shifts {best_tool.method} by {diff:+.0%} file recall@{K_MAIN}"
+             if pd.notna(diff) else "File recall by segment (one 'names gold' segment is empty in this run)",
+             fontweight="bold")
+plt.tight_layout()
+plt.show()
+pct = lambda v: "n/a (no such tasks)" if pd.isna(v) else f"{v:.0%}"
+nn = r[r["Issue names gold"] == "does not"].groupby("method").file_recall.mean()
+fallback = ("No scored task here has an issue that names no code, so the fallback cannot be judged." if nn.empty else
+            f"On the issues that name no code, BM25 scores {nn.get('BM25 · statement', np.nan):.0%}, against "
+            f"{nn.get(best_tool.method, np.nan):.0%} for the tool: "
+            + ("BM25 is the better fallback there." if nn.get("BM25 · statement", 0) > nn.get(best_tool.method, 0)
+               else "the tool still holds up there."))
+md(f"**Takeaway:** for `{best_tool.method}`, file recall@{K_MAIN} is {pct(gap.get('names gold'))} when the issue "
+   f"names a gold symbol, and {pct(gap.get('does not'))} when it does not "
+   f"({(seg['Issue names gold'] == 'names gold').mean():.0%} of scored tasks name one). {fallback} "
+   f"Raw-issue `search_similar_code` found no lexical anchor at all (recall 0) on {seg.no_anchor.astype(bool).mean():.0%} "
+   f"of tasks, and {(seg.n_seeds == 0).mean():.0%} of tasks resolved no identifier seed.")
+
+##### [markdown 41]
+### Recall per tool call, and what the 5,000-character cap does to k
+
+`search_similar_code` divides 5,000 characters of code across its k results. Past some k, each snippet shrinks
+to little more than a signature. The chart puts the recall gain from a larger k next to the characters left per
+snippet.
+
+##### [code 42]
+st = curve[curve.method == best_tool.method].set_index("k")["mean"]
+fig, ax1 = plt.subplots(figsize=(10, 4.5))
+ax1.plot(st.index, st.values, marker="o", color=COLOR[best_tool.method], lw=2.4, label="File recall@k")
+ax1.set(xscale="log", xlabel="k (log scale)", ylabel="File recall@k", ylim=(0, 1.02))
+ax1.set_xticks(KS, [str(k) for k in KS])
+ax2 = ax1.twinx()
+ax2.bar(KS, [MAX_CHARS / k for k in KS], width=[k * 0.25 for k in KS], alpha=0.25, color=PALETTE[4])
+ax2.set_ylabel("Characters of code per result (search_similar_code)")
+k90 = int(st[st >= 0.9 * st.max()].index.min()) if st.max() > 0 else K_MAIN
+ax1.set_title(f"{best_tool.method}: 90% of its k=50 recall is reached by k={k90}")
+plt.tight_layout()
+plt.show()
+md(f"**Takeaway:** `{best_tool.method}` reaches {st.get(k90, np.nan):.0%} file recall at k={k90}, which is 90% of its "
+   f"k=50 ceiling ({st.max():.0%}). "
+   + (f"At k={k90}, `search_similar_code` still shows ~{MAX_CHARS // k90:,} characters of code per snippet. "
+      if best_tool.method.startswith("search") else
+      f"`get_code_neighbors` returns names only, capped at {MAX_NEIGHBORS} names or {MAX_CHARS:,} characters. ")
+   + f"Scored tasks used {seg.n_seeds.mean():.1f} identifier seeds (tool calls) on average.")
+
+##### [markdown 43]
+## 10. Recommendation and next steps
+
+##### [code 44]
+bm25_10 = r10.loc["BM25 · statement", "mean"]
+tool, how = best_tool.method.split(" · ")
+call = f"`{tool}` ({how}" + (f", ≤ {MAX_SEEDS} calls" if how == "identifiers" else "") + f") at k={k90}"
+look_how = "`grep -n` for each name, or `get_code_neighbors` on it, whose `node` field is the resolved symbol"
+if lex_v == "beats":
+    rec_main = (f"Make keyword search the primary localisation step: grep/BM25-style search seeded with the issue text found "
+                f"{m10(lex):.0%} of gold files at k={K_MAIN}, against {z:.0%} for the best graph tool. Second, look up the "
+                f"identifiers the issue names ({look_how}; {lookup_10:.0%} on its own). Use graph tools only to widen "
+                f"around a symbol you have already found ({call}).")
+elif look_v == "beats":
+    rec_main = (f"Look up the identifiers the issue names first ({look_how}; {lookup_10:.0%} of gold files), then use "
+                f"{call} ({z:.0%}) to widen the search. Keyword search ({LEXNAME}, {m10(lex):.0%}) covers issues that name no code.")
+else:
+    rec_main = (f"Push {call} as the primary step ({z:.0%} file recall@{K_MAIN}), with keyword search ({LEXNAME}, "
+                f"{m10(lex):.0%}) and identifier lookup ({lookup_10:.0%}) as cross-checks.")
+
+##### [code 45]
+raw_m, id_m = "search_similar_code · statement", "search_similar_code · identifiers"
+raw_v = verdict(raw_m, id_m)
+raw = {"trails": f"If you do call `search_similar_code`, a symbol name tends to work better than the raw issue text "
+                 f"({m10(id_m):.0%} vs {m10(raw_m):.0%}).",
+       "roughly ties with": f"As `search_similar_code` queries, raw issue text and symbol names roughly tie "
+                            f"({m10(raw_m):.0%} vs {m10(id_m):.0%}).",
+       "beats": f"Raw issue text beats symbol names as a `search_similar_code` query ({m10(raw_m):.0%} vs {m10(id_m):.0%})."}[raw_v]
+rec = f"{rec_main} {raw} Use `get_code_subgraph` only to see how symbols you already hold connect."
+md(rec)
+
+##### [code 46]
+n_sc = res.instance_id.nunique()
+tldr = (f"**TL;DR** ({n_sc:,} scored tasks, {res.group.nunique()} repo group(s), file recall@{K_MAIN}, mean across groups)\n"
+        f"- {head}; {sym}.\n"
+        f"- {look}; a leave-one-repo-out pick of the best graph tool scores {lt.file_recall.mean():.0%} held out"
+        f"{'' if lt.honest.all() else ' (single group: not a real held-out check)'}. {hub}\n"
+        f"- Recommendation: {rec_main}")
+TLDR.update(Markdown(tldr))
+md(tldr)
+OUT = Path("/kaggle/working") if Path("/kaggle/working").exists() else Path.cwd()
+(OUT / "tldr.md").write_text(tldr + "\n", encoding="utf-8")
+by_group(allres, ["method", "k"]).merge(by_group(allres, ["method", "k"], "sym_recall"), on=["method", "k"],
+                                        suffixes=("_file_recall", "_sym_recall")).to_csv(OUT / "recall_at_k.csv", index=False)
+print(f"wrote {OUT / 'tldr.md'} and {OUT / 'recall_at_k.csv'}")
+
+##### [markdown 47]
+**Next steps**
+- **A real query encoder.** If the harness ever exposes one, re-run `search_similar_code · statement` with the issue
+  embedded directly. The lexical-anchor fallback is an assumption about undocumented behaviour.
+- **Hybrid prompt policy.** Seed with issue identifiers, and when none resolve, take the top BM25 node as the seed for
+  `get_code_neighbors`, and test whether that lifts the "issue names no code" segment in §9.
+- **Line-level gold.** Map hunks to node line spans once the snapshots are extracted, instead of text matching.
+  This would tighten symbol recall for module-level edits.
+- **End-to-end check.** Does higher file recall@k predict resolved tasks in the harness? That would take agent runs,
+  not this offline benchmark.
+
+*Data: [Gemma 4 Developer Agent competition](https://www.kaggle.com/competitions/gemma-4-developer-agent). Tool
+semantics follow `HARNESS_README.md` §6.3 and §7.1. Feedback welcome in the comments.*
