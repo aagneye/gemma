@@ -37,11 +37,30 @@ def analyse(trace_path):
     lat = [c["elapsed"] for c in calls if c["elapsed"]]
     fm = d.get("final_metrics") or {}
     budget_warn = any("budget_warning" in json.dumps(s.get("observation") or {}) for s in d.get("steps", []))
+    # edit-error kinds (what the lost-edit bucket is made of) and how the run ended
+    kinds = []
+    for s in d.get("steps", []):
+        for tc in s.get("tool_calls") or []:
+            if tc.get("function_name") in EDIT_TOOLS:
+                obs = (s.get("observation") or {}).get("content") or ""
+                if '"status": "error"' not in obs[:40]: continue
+                low = obs.lower()
+                k = "after_budget" if "budgetexceeded" in low else "not_found" if "not found" in low else "ambiguous" if "occurs" in low else "other"
+                if k not in kinds: kinds.append(k)
+    submits = [c for c in calls if c["tool"] == "submit_patch"]
+    nonempty_submit = False
+    for s in d.get("steps", []):
+        if any(tc.get("function_name") == "submit_patch" for tc in s.get("tool_calls") or []):
+            obs = (s.get("observation") or {}).get("content") or ""
+            if '"status": "ok"' in obs and '"patch_size": 0' not in obs: nonempty_submit = True
+    nudges = sum(1 for s in d.get("steps", [])[2:] if s.get("source") == "user")
+    exhausted = any(c["error_type"] == "BudgetExceeded" for c in calls)
+    stop = ("submitted" if nonempty_submit else "submitted_empty" if submits else "calls_exhausted" if exhausted else "text_stop")
     return {"n_calls": len(calls), "first_edit": first_edit, "edit_err": edit_err, "cmd_err": cmd_err, "repeats": repeats,
             "tests": tests, "reads": reads, "searches": searches, "submitted": submitted, "graph": graph,
             "lat_med": round(statistics.median(lat), 1) if lat else None, "lat_max": round(max(lat), 1) if lat else None,
             "lat_sum": round(sum(lat), 1), "prompt_tok": fm.get("total_prompt_tokens"), "compl_tok": fm.get("total_completion_tokens"),
-            "budget_warn": budget_warn}
+            "budget_warn": budget_warn, "edit_err_kind": "+".join(kinds), "stop_reason": stop, "nudges": nudges}
 
 
 def mode(r):
@@ -60,7 +79,8 @@ def main():
         a = analyse(t) if t.exists() else {}
         out.append({**r, **a, "mode": mode(r)})
     cols = ["instance_id", "mode", "resolved", "patch_chars", "duration_s", "tool_calls", "first_edit", "edit_err", "cmd_err", "repeats",
-            "tests", "reads", "searches", "submitted", "graph", "lat_med", "lat_max", "lat_sum", "prompt_tok", "compl_tok", "budget_warn"]
+            "tests", "reads", "searches", "submitted", "graph", "lat_med", "lat_max", "lat_sum", "prompt_tok", "compl_tok", "budget_warn",
+            "edit_err_kind", "stop_reason", "nudges"]
     with open(ev / "trace_analysis.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(out)
     print(" | ".join(cols[1:]))
@@ -76,6 +96,8 @@ def main():
     print("resolve by repo:", grp("r", lambda o: o["instance_id"].split("_")[0]))
     print("resolve by edit errors:", grp("e", lambda o: min(o.get("edit_err") or 0, 3)))
     print("resolve by repeats:", grp("p", lambda o: min(o.get("repeats") or 0, 3)))
+    print("edit-error kinds:", dict(collections.Counter(k for o in out for k in (o.get("edit_err_kind") or "").split("+") if k)))
+    print("stop reasons:", dict(collections.Counter(o.get("stop_reason") for o in out)), "| runs with nudges:", sum(1 for o in out if (o.get("nudges") or 0) > 0))
     lm = [o["lat_med"] for o in out if o.get("lat_med")]
     print("median per-call latency s: median", statistics.median(lm), "max-of-medians", max(lm))
     print("timeouts with <=15 calls:", sum(1 for o in out if float(o["duration_s"] or 0) >= 470 and (o.get("n_calls") or 0) <= 15))
