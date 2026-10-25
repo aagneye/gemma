@@ -70,3 +70,10 @@
 - Found the **$10k Small Model bonus** (E2B/E4B base, LoRA allowed, one of the 2 final picks; top public 0.06).
   Plan: `research/PLAN_TO_WIN.md` (Track A 31B daily draws + mean raising; Track B E4B baseline -> E4B bundle -> 31B->E4B
   distillation LoRA). E4B (11 GB) downloaded to the VM.
+
+## 2026-10-25 09:50 UTC — WS0 done; three parallel sessions running
+- Shipper: Kaggle refuses a new submission while one is PENDING (400 body captured). `vm/daily_ship.py` deployed (tmux + cron watchdog); `results/ship.txt` = v5_single (fallback v3t2k); `results/ship_schedule.txt` = E4B slot on 2026-10-27 (`aagneye/gemma4-e4b-v3t2k` v1, byte-checked). v5 goes out as soon as 57603042 finishes scoring.
+- Sessions started by the user: research sprint (`research/raw/09*,10*,11*`, FT_DATA_SPEC, INSTRUCTION_DESIGN, e1/e2/e4b prompt drafts), E4B track (serving, replica calibration, phase builder, E5/E6), fine-tuning pipeline (trace converter, E4B trainer path, smoke adapter). They log to `research/ledger/*.md`; the main session commits.
+- **New measured bug -> v5.1**: the "/tmp scratch" rule (since v3) makes the model call `write_file` on /tmp paths, rejected by the harness as path traversal: v3t2k 16 tasks/16 calls, v4_single 31/35, v5 27 of 53 tasks / 29 wasted calls (11 recovered via run_command); pub022 0. `vm/prompts/system_v5_1.md` = v5 + one line (scratch files only via run_command heredoc or `python -c`). All Oct-31 bundles (v5.1 control, E1, E2) build on v5.1.
+- Bucket shift pub022 -> v5 (50 common): 2 NO_PATCH_TIMEOUT -> RESOLVED, 2 WRONG_PATCH -> RESOLVED, 1 RESOLVED -> WRONG_PATCH; 12 WRONG_PATCH stayed (E1 target), 4 NO_PATCH_CALLS stayed (E2 target). v5 stop reasons: 40 submitted, 7 submitted empty, 5 text stop, 1 calls exhausted.
+- Oct 31 Kaggle plan (30 GPU-h): G1 smoke-adapter load test (~1 h) + paired evals v5.1 / E1 / E2 (~9 h each).
