@@ -123,3 +123,14 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Gotchas found: (1) the default Kaggle image is Python 3.13 and the wheelhouse is cp312 -> pin `docker_image` to the official notebook's image (`gcr.io/kaggle-private-byod/python@sha256:37c64f...`); (2) unknown `machine_shape` ids silently fall back to "T4 x2" (31B then dies on bf16) -> the official notebook uses `NvidiaL4`; (3) thousands of sandbox `WARNING` log lines overflow the IOPub channel (CellTimeoutError) -> root/library logging set to ERROR, progress via print; (4) `kaggle kernels logs` returns nothing while a kernel is running.
 - **Kaggle-environment soundness (results/kaggle_soundness.csv): 71/129 sound** = fastapi 29 + rich 42; requests 0/13 and httpx 0/1 (gold fails). Only 8 of our 21 Docker-sound tasks are Kaggle-sound -> local T4/Docker A/Bs measured mostly the wrong tasks; they are retired. All A/Bs now run on Kaggle-sound tasks.
 - GPU quota: 30 h/week (refresh Saturdays 00:00 UTC); L4 notebooks bill at 2x.
+
+## 2026-10-25: daily shipper, plan to win, parallel workstreams
+- **Kaggle refuses a new code submission while one is still PENDING** (400 "Your team already has 1 pending submissions").
+  Scoring takes ~13 h, so a late submission blocks the next day. `vm/daily_ship.py` (tmux `dailyship`, supervised by
+  `dailyship_loop.sh` + a cron watchdog from `install_dailyship_cron.sh`) submits from 00:10 UTC: per-day override in
+  `results/ship_schedule.txt` (weekly E4B slot), else line 1 of `results/ship.txt`, line 2 as fallback; truth from the API
+  list; ledger `results/ledger.csv`; log `logs/daily_ship.log` (ALERT lines after 02:00 UTC without a submission).
+- Scores: v5_single 26/53 (paired +3 vs pub022) -> shipped daily; E4B baseline 8/75 (small-model board top 0.06).
+- `compare_runs.py` now prints p90 durations, a per-repo split and the failure-bucket shift matrix (needs
+  `trace_analysis.csv` from `analyze_traces.py` in both dirs). `sub_status.py --stats` gives per-config LB mean/SE.
+- Plan: `research/PLAN_TO_WIN.md` (approved Oct 25). Parallel sessions log to `research/ledger/*.md`.
