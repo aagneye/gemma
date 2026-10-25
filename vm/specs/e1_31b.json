@@ -1,0 +1,16 @@
+{
+  "name": "e1_31b",
+  "model": "gemma-4-31b-it-qat-w4a16-ct",
+  "eval": {"timeout": 90, "calls": 28, "minutes": 8.0, "turns": 80},
+  "sampling": {"thinking": 4096, "temperature": 0.2, "top_p": 0.95, "max_output_tokens": 8192},
+  "wrapper": "sequential",
+  "root_name": "swe_pipeline",
+  "description": "E1 verifier gate: solver edits and hands over CHANGED/REPRO/TEST; verifier reruns the repro and one targeted test, fixes once, checks the diff, submits.",
+  "phases": [
+    {"name": "solver", "prompt": "phase_solver.md", "tools": ["run_command", "read_file", "edit_file", "write_file"],
+     "description": "Locates and edits the source; hands over CHANGED / REPRO / TEST; cannot submit."},
+    {"name": "verifier", "prompt": "phase_verifier.md", "tools": ["run_command", "read_file", "edit_file", "get_status", "submit_patch"],
+     "thinking": 2048,
+     "description": "Reruns the repro and one targeted test, fixes once, checks the diff, submits."}
+  ]
+}
