@@ -1,8 +1,9 @@
 # Factory state ledger (update after every build / eval / submission)
 
-## Current best
-- **Paired-eval best:** v3t2k (v3 prompt + thinking 2048), 23/50 Kaggle-sound tasks (pub022 22/50). LB 0.17 (v3).
-- **Goal:** LB > 0.22 (top line 0.24 on Oct 22).
+## Current best (2026-10-25)
+- **Paired-eval best: v5_single** (31B, `vm/prompts/system_v5.md`, T 0.2, thinking 4096, 28 calls / 8 min, 90 s cmd timeout): **26/53** Kaggle-sound tasks, 276 s/task (120-task projection 9.1 h). Paired: vs pub022 **+3** (4W/1L) on 50 common; vs v3t2k +1 (4W/3L) on 52; vs v4_single +3 (5W/2L) on 49. Shipped daily from Oct 25 (`results/ship.txt`, fallback v3t2k).
+- **E4B baseline** (`submissions/e4b_v3t2k`, same bundle with model e4b): **8/75**, 97 s/task, 12.5 calls mean, 2 no-patch; all 6 of its resolved tasks that pub022 attempted were also solved by pub022. Small-model LB top = 0.06 -> this already leads it. First E4B LB slot: Oct 27, then weekly.
+- **Goal:** #1 main track (needs ~16/62 private, see `C:\Users\aagne\.claude\plans\sleepy-hatching-squid.md`) and the $10k small-model bonus. LB best so far 0.17.
 
 ## Ledger
 | Date | Artifact | Change | Paired eval (Kaggle-sound, same order) | LB |

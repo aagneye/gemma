@@ -11,7 +11,12 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
 - Keep going until the goal is reached. Final deadline Dec 2 2026; paper track Nov 12.
 - Second target (added 2026-10-24): the **$10k Small Model bonus** (best E2B/E4B-based submission; top public is 0.06).
   Final picks = best 31B bundle + best E4B bundle. Full plan: `research/PLAN_TO_WIN.md`.
-- Daily slots ship automatically (`vm/daily_ship.sh` submits the bundle named in `results/ship.txt` on the VM).
+- Daily slots ship automatically: `vm/daily_ship.py` (tmux `dailyship` on the VM, cron watchdog) submits at 00:10 UTC the
+  per-day override in `results/ship_schedule.txt` or line 1 of `results/ship.txt` (line 2 = fallback). **Kaggle refuses a
+  new submission while one is still scoring** (~13 h), so never submit manually late in the day.
+- Slot policy (approved 2026-10-25): 31B best bundle every day, one E4B slot per week; LB slots never validate candidates;
+  freeze new bundles Nov 24; final picks Dec 1 = earliest valid draw of the best 31B config + earliest valid E4B draw.
+  Full plan: `research/PLAN_TO_WIN.md`.
 
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
