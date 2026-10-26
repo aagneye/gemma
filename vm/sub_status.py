@@ -10,17 +10,27 @@ from kaggle.api.kaggle_api_extended import KaggleApi
 LB_TASKS = 58
 
 
+def all_submissions(api, page_size=100):
+    """Every submission (the API returns one page of 20 by default; by Nov 8 we exceed that)."""
+    out, page = [], 1
+    while True:
+        batch = list(api.competition_submissions("gemma-4-developer-agent", page_number=page, page_size=page_size))
+        out.extend(batch)
+        if len(batch) < page_size or page > 50: return out
+        page += 1
+
+
 def rows(api, n):
     out = []
-    for s in api.competition_submissions("gemma-4-developer-agent")[:n]:
+    for s in all_submissions(api)[:n]:
         out.append((s.ref, str(s.date)[:16], getattr(s, "public_score", "") or "", (getattr(s, "error_description", "") or "")[:120], (s.description or "")[:70]))
     return out
 
 
 def stats(api):
     groups = collections.defaultdict(list)
-    for s in api.competition_submissions("gemma-4-developer-agent"):
-        key = (s.description or "?").split(":")[0].strip()[:28]
+    for s in all_submissions(api):
+        key = (s.description or "?").split(":")[0].strip()[:28]   # every ship message starts with "<bundle>:"
         groups[key].append(s)
     print(f"{'config':28} {'n_sc':>4} {'mean/58':>7} {'SE':>5} {'err':>3} {'pend':>4}  earliest valid ref")
     for key, ss in sorted(groups.items(), key=lambda kv: min(str(x.date) for x in kv[1])):

@@ -35,15 +35,19 @@ def main():
     a = ap.parse_args()
     b, c = load(a.base), load(a.cand)
     common = [i for i in b if i in c]
+    if not common:
+        print("no common tasks between the two runs"); return
     res = lambda r: str(r["resolved"]) == "True"
     dur = lambda r: float(r["duration_s"] or 0)
+    timed = [i for i in common if (b[i].get("duration_s") or "") != "" and (c[i].get("duration_s") or "") != ""]   # crashed rows have no duration
     rb = sum(res(b[i]) for i in common); rc = sum(res(c[i]) for i in common)
     wins = [i for i in common if res(c[i]) and not res(b[i])]; losses = [i for i in common if res(b[i]) and not res(c[i])]
-    db = statistics.mean(dur(b[i]) for i in common); dc = statistics.mean(dur(c[i]) for i in common)
+    db = statistics.mean(dur(b[i]) for i in timed) if timed else 0.0; dc = statistics.mean(dur(c[i]) for i in timed) if timed else 0.0
+    if len(timed) < len(common): print(f"note: {len(common) - len(timed)} common task(s) lack a duration (crash/budget cut) and are excluded from time stats")
     print(f"common tasks {len(common)} | baseline {rb} | candidate {rc} | gain {rc - rb:+d}")
     print(f"wins {len(wins)} {wins}\nlosses {len(losses)} {losses}\nsign-test p = {sign_p(len(wins), len(losses)):.3f}")
-    print(f"duration mean {db:.0f}s -> {dc:.0f}s | p90 {p90([dur(b[i]) for i in common]):.0f}s -> {p90([dur(c[i]) for i in common]):.0f}s"
-          f" | candidate 120-task projection {dc * 120 / 3600:.1f} h (p90-based {p90([dur(c[i]) for i in common]) * 120 / 3600:.1f} h; same hardware as its run)")
+    print(f"duration mean {db:.0f}s -> {dc:.0f}s | p90 {p90([dur(b[i]) for i in timed]):.0f}s -> {p90([dur(c[i]) for i in timed]):.0f}s"
+          f" | candidate 120-task projection {dc * 120 / 3600:.1f} h (p90-based {p90([dur(c[i]) for i in timed]) * 120 / 3600:.1f} h; same hardware as its run)")
     by_repo = collections.defaultdict(lambda: [0, 0, 0])
     for i in common:
         r = by_repo[i.split("_")[0]]; r[0] += 1; r[1] += res(b[i]); r[2] += res(c[i])

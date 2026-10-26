@@ -45,7 +45,8 @@ def analyse(trace_path):
                 obs = (s.get("observation") or {}).get("content") or ""
                 if '"status": "error"' not in obs[:40]: continue
                 low = obs.lower()
-                k = "after_budget" if "budgetexceeded" in low else "not_found" if "not found" in low else "ambiguous" if "occurs" in low else "other"
+                k = ("after_budget" if "budgetexceeded" in low else "not_found" if "not found" in low
+                     else "ambiguous" if ("occurrence" in low or "occurs" in low) else "path_traversal" if "path traversal" in low else "other")
                 if k not in kinds: kinds.append(k)
     submits = [c for c in calls if c["tool"] == "submit_patch"]
     nonempty_submit = False
@@ -53,7 +54,8 @@ def analyse(trace_path):
         if any(tc.get("function_name") == "submit_patch" for tc in s.get("tool_calls") or []):
             obs = (s.get("observation") or {}).get("content") or ""
             if '"status": "ok"' in obs and '"patch_size": 0' not in obs: nonempty_submit = True
-    nudges = sum(1 for s in d.get("steps", [])[2:] if s.get("source") == "user")
+    # the harness records continuation nudges as custom events (source "system", extra.event_type "continuation_nudge")
+    nudges = sum(1 for s in d.get("steps", []) if (s.get("extra") or {}).get("event_type") == "continuation_nudge")
     exhausted = any(c["error_type"] == "BudgetExceeded" for c in calls)
     stop = ("submitted" if nonempty_submit else "submitted_empty" if submits else "calls_exhausted" if exhausted else "text_stop")
     return {"n_calls": len(calls), "first_edit": first_edit, "edit_err": edit_err, "cmd_err": cmd_err, "repeats": repeats,
@@ -64,11 +66,17 @@ def analyse(trace_path):
 
 
 def mode(r):
-    res = r["resolved"] == "True"; patch = int(r["patch_chars"] or 0); dur = float(r["duration_s"] or 0)
+    """Failure bucket. Timeouts come from the harness error column ("Agent exceeded session timeout") because wall-clock
+    duration includes verification and, on the VM replica, is scaled by REPLICA_TIME_SCALE; the 470 s rule is only a
+    fallback for result files without an error column."""
+    res = r["resolved"] == "True"; patch = int(r["patch_chars"] or 0)
+    if "error" in r:
+        timeout = "exceeded session timeout" in (r.get("error") or "").lower()
+    else:
+        timeout = float(r["duration_s"] or 0) >= 470
     if res: return "RESOLVED"
-    if patch == 0: return "NO_PATCH_TIMEOUT" if dur >= 470 else "NO_PATCH_CALLS"
-    if dur >= 470: return "WRONG_PATCH_TIMEOUT"
-    return "WRONG_PATCH"
+    if patch == 0: return "NO_PATCH_TIMEOUT" if timeout else "NO_PATCH_CALLS"
+    return "WRONG_PATCH_TIMEOUT" if timeout else "WRONG_PATCH"
 
 
 def main():

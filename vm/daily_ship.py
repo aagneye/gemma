@@ -55,10 +55,11 @@ def ledger_row(ref, kernel, version, role, message):
 def main():
     from kaggle.api.kaggle_api_extended import KaggleApi
     api = KaggleApi(); api.authenticate()
-    failures = {}   # kernel -> consecutive non-quota failures (2 -> skip it for today)
+    failures, fail_day = {}, None   # kernel -> non-quota failures today (2 -> skip it for the rest of the day)
     while True:
         try:
             t = now(); today = t.date()
+            if fail_day != today: failures, fail_day = {}, today
             subs = api.competition_submissions(COMP)
             todays = [s for s in subs if s.date and s.date.date() == today]
             pending = [s for s in subs if "PENDING" in str(getattr(s, "status", ""))]
@@ -76,12 +77,13 @@ def main():
             if not cands:
                 log("ALERT no usable candidate (all failed twice today)"); time.sleep(1800); continue
             kernel, version, message, role = cands[0]
+            before = {s.ref for s in subs}
             try:
                 api.competition_submit_code(file_name="submission.zip", message=message, competition=COMP,
                                             kernel=kernel, kernel_version=int(version), quiet=True)
                 time.sleep(45)
                 subs = api.competition_submissions(COMP)
-                new = [s for s in subs if s.date and s.date.date() == today]
+                new = [s for s in subs if s.ref not in before]   # by ref, so a submission stamped after midnight is still recorded
                 if new:
                     log(f"SUBMITTED {kernel} v{version} ({role}) -> ref {new[0].ref}")
                     ledger_row(new[0].ref, kernel, version, role, message)
