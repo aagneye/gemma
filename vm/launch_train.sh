@@ -15,7 +15,7 @@ while [[ "${1:-}" == --* ]]; do
   esac
 done
 RUN=${1:?run name}; DATA=${2:?tokenized dir}; EPOCHS=${3:-2}; RANK=${4:-32}; LR=${5:-1e-4}; GA=${6:-4}; EXTRA=${7:-}
-GPUS=${GPUS:-0,1,2,3}; NPROC=${NPROC:-4}
+GPUS=${GPUS:-1,2,3}; NPROC=${NPROC:-3}   # GPU 0 belongs to another project: never a default
 ROOT=/mnt/biohub/kdata/gemma4; cd "$ROOT"; mkdir -p runs logs
 CMD="source $ROOT/.venv/bin/activate && cd $ROOT && NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 OMP_NUM_THREADS=8 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True CUDA_VISIBLE_DEVICES=$GPUS \
 torchrun --standalone --nproc_per_node $NPROC ~/gemma4_vm/train_qlora.py \

@@ -10,6 +10,15 @@ Q=${1:?queue file}; R=/mnt/biohub/kdata/gemma4; cd $R
 MODEL=${MODEL:-gemma-4-31b-it-qat-w4a16-ct}; TP=${TP:-4}; GPUS=${GPUS:-}; PORT=${PORT:-8000}; CONC=${CONC:-1}
 NEED_MIB=${NEED_MIB:-12200}; MEM=${MEM:-}; export REPLICA_TIME_SCALE=${REPLICA_TIME_SCALE:-10} PORT
 LOG=logs/opportunistic_$PORT.log; [ "$PORT" = 8000 ] && LOG=logs/opportunistic.log
+# GPU 0 belongs to another project: never use it unless GPUS names it explicitly. With GPUS empty, take every other GPU;
+# refuse to start when fewer GPUs remain than TP needs (the 31B with TP=4 cannot run on this shared VM).
+EXCLUDE_GPUS=${EXCLUDE_GPUS:-0}
+if [ -z "$GPUS" ]; then
+  GPUS=$(nvidia-smi --query-gpu=index --format=csv,noheader | tr -d ' ' | grep -vxF -f <(echo "$EXCLUDE_GPUS" | tr ',' '\n') | paste -sd,)
+fi
+if [ "$(echo "$GPUS" | tr ',' '\n' | grep -c .)" -lt "$TP" ]; then
+  echo "$(date -u) refusing to start $MODEL: TP=$TP needs more GPUs than allowed ($GPUS; excluded $EXCLUDE_GPUS)" >> $LOG; exit 2
+fi
 case "$MODEL" in *31b*) KEY=31b;; *12b*) KEY=12b;; *e4b*) KEY=e4b;; *e2b*) KEY=e2b;; *) KEY=$MODEL;; esac
 free_ok() {   # every GPU we will use (GPUS, or all) must have >= NEED_MIB free
   nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | tr -d ' ' |

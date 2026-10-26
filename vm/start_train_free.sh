@@ -16,7 +16,8 @@ while [[ "${1:-}" == --* ]]; do
 done
 MIN=${1:-2}; R=/mnt/biohub/kdata/gemma4; cd $R; LOG=logs/start_train_free.log
 [ -n "$ALPHA" ] && EXTRA="$EXTRA --alpha $ALPHA"
-free_gpus() { nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | awk -F', ' '$2<500{print $1}' | head -n "$MAXG" | paste -sd, ; }
+# GPUs in EXCLUDE_GPUS (default 0 = the other project's card) are never taken, even when they look free.
+free_gpus() { nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | awk -F', ' -v ex=",${EXCLUDE_GPUS:-0}," '$2<500 && index(ex, ","$1",")==0 {print $1}' | head -n "$MAXG" | paste -sd, ; }
 ngpu() { echo "$1" | tr ',' '\n' | grep -c . ; }
 until G=$(free_gpus); [ "$(ngpu "$G")" -ge "$MIN" ]; do sleep 60; done
 N=$(ngpu "$G"); GA=$(( (16 + N / 2) / N ))
@@ -29,7 +30,9 @@ NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 OMP_NUM_THREADS=8 PYTORCH_CUDA_ALLOC_CONF=e
   --max-len $MAXLEN --chunk 512 --log-every 1 --save-every 1000 $EXTRA > logs/ddp_smoke_$RUN.log 2>&1
 deactivate
 grep -E "SYNC_|saved ->|Traceback|Error" logs/ddp_smoke_$RUN.log | tail -6 >> $LOG
-if grep -q "SYNC_MISMATCH\|Traceback" logs/ddp_smoke_$RUN.log || ! grep -q "SYNC_OK step 3" logs/ddp_smoke_$RUN.log || ! grep -q "saved ->" logs/ddp_smoke_$RUN.log; then
+# SYNC_OK is only printed by multi-rank runs (train_qlora.py prints it when world > 1), so require it only for N >= 2.
+if grep -q "SYNC_MISMATCH\|Traceback" logs/ddp_smoke_$RUN.log || ! grep -q "saved ->" logs/ddp_smoke_$RUN.log \
+   || { [ "$N" -ge 2 ] && ! grep -q "SYNC_OK step 3" logs/ddp_smoke_$RUN.log; }; then
   echo "$(date -u) DDP SMOKE FAILED -> not launching $RUN (see logs/ddp_smoke_$RUN.log)" >> $LOG; exit 1
 fi
 echo "$(date -u) DDP smoke OK -> launching $RUN on GPUs $G" >> $LOG
