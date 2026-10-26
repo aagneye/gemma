@@ -197,8 +197,43 @@ for idx, task in enumerate(order[:N_TASKS], start=1):
     with open(OUT / 'results.csv', 'w', newline='') as f:
         w = csv.writer(f); w.writerow(cols); w.writerows(rows)
     json.dump(patches, open(OUT / 'patches.json', 'w'))
-server.stop()
 summary['full_tasks'] = {'resolved': sum(1 for x in rows if x[2]), 'n': len(rows), 'hours': round((time.time() - t0) / 3600, 2), 'rows': rows}
+
+# ---------------------------------------------------------------- optional: the same tasks with the BASE bundle -----
+# (same server, same prompt and budgets, agent.yaml without the adapter line) -> paired adapter-vs-base comparison
+if ALSO_BASE:
+    BASE_DIR = WORK / 'agent_base'; shutil.rmtree(BASE_DIR, ignore_errors=True)
+    for rel, text in FILES.items():
+        if rel.endswith(('.yaml', '.yml')):
+            text = '\n'.join(l for l in text.splitlines() if not l.strip().startswith('adapter:')) + '\n'
+        p = BASE_DIR / rel; p.parent.mkdir(parents=True, exist_ok=True); p.write_text(text, encoding='utf-8')
+    validate_directory(BASE_DIR, limits=limits)
+    cfg_b = EvalConfig(tasks_path=DATA_DIR / 'tasks.jsonl', snapshots_dir=DATA_DIR / 'snapshots', results_dir=OUT / 'agent_run_base',
+                       submission_dir=BASE_DIR, models=models, sandbox='subprocess',
+                       timeout_seconds=int(ev.get('timeout_seconds', 300)), verification_timeout_seconds=int(ev.get('verification_timeout_seconds', 300)),
+                       max_time_minutes=float(ev.get('max_time_minutes', 60.0)), max_tool_calls=int(ev.get('max_tool_calls', 100)),
+                       max_turns=int(turns) if turns is not None else None, limits=limits, generation_constraints=gen,
+                       context_cache_config=ContextCacheConfig(min_tokens=2048, ttl_seconds=1800, cache_intervals=10),
+                       events_compaction_config=EventsCompactionConfig(compaction_interval=15, overlap_size=2, token_threshold=14336, event_retention_size=5),
+                       graph_dir=str(DATA_DIR / 'graphs'), embeddings_dir=str(DATA_DIR / 'embeddings'), wheels_dir=DATA_DIR / 'wheels', verbose=False)
+    evaluator_b = Evaluator(cfg_b); rows_b = []; t1 = time.time()
+    for idx, task in enumerate(order[:N_TASKS], start=1):
+        try:
+            r = run_sync(evaluator_b.evaluate_task, task=task, task_index=idx, total_tasks=N_TASKS)
+            patch = (r.agent_patch or '').strip()
+            row = [task.instance_id, task.repo, bool(r.resolved), r.test_exit_code, len(patch), r.tool_calls, round(r.duration_seconds, 1), (getattr(r, 'error', None) or '')[:160]]
+        except Exception as e:
+            traceback.print_exc(); row = [task.instance_id, task.repo, False, None, 0, None, None, repr(e)[:160]]
+        rows_b.append(row)
+        print(f'[base {idx}] {row[0]} resolved={row[2]} calls={row[5]} dur={row[6]}s | base total {sum(1 for x in rows_b if x[2])}/{len(rows_b)}', flush=True)
+        with open(OUT / 'results_base.csv', 'w', newline='') as f:
+            w = csv.writer(f); w.writerow(cols); w.writerows(rows_b)
+    ra = {x[0]: x[2] for x in rows}; rb = {x[0]: x[2] for x in rows_b}; common = [i for i in ra if i in rb]
+    wins = [i for i in common if ra[i] and not rb[i]]; losses = [i for i in common if rb[i] and not ra[i]]
+    summary['paired'] = {'common': len(common), 'base': sum(rb[i] for i in common), 'adapter': sum(ra[i] for i in common), 'wins': wins, 'losses': losses,
+                         'base_hours': round((time.time() - t1) / 3600, 2)}
+    print(f"PAIRED adapter vs base on {len(common)} tasks: base {summary['paired']['base']} adapter {summary['paired']['adapter']} | wins {wins} | losses {losses}", flush=True)
+server.stop()
 json.dump(summary, open(OUT / 'g1_summary.json', 'w'), indent=1)
 print(f"DONE G1: differ {summary['n_differ']}/{summary['n_probe']}, full tasks {summary['full_tasks']['resolved']}/{len(rows)} in {summary['full_tasks']['hours']} h; bundle {BUNDLE_HASH}", flush=True)
 '''
@@ -233,6 +268,7 @@ def main():
     ap.add_argument("--bundle"); ap.add_argument("--adapter-dataset", help="owner/slug of the private Kaggle dataset holding adapters/main_lora/*")
     ap.add_argument("--order-csv"); ap.add_argument("--n-probe", type=int, default=20); ap.add_argument("--n-tasks", type=int, default=3)
     ap.add_argument("--probe-max-tokens", type=int, default=2048); ap.add_argument("--machine", default="NvidiaL4")
+    ap.add_argument("--also-base", action="store_true", help="after the adapter tasks, run the same tasks with the base bundle (paired comparison)")
     ap.add_argument("--prepare-adapter-dataset", nargs=3, metavar=("BUNDLE", "OWNER/SLUG", "DIR"))
     a = ap.parse_args()
     if a.prepare_adapter_dataset:
@@ -251,7 +287,7 @@ def main():
     decls = {t["function"]["name"]: t for t in json.load(open(HERE / "tool_declarations.json", encoding="utf-8"))}
     tools = [decls[n] for n in tool_names if n in decls]
     order = task_order(a.order_csv)
-    head = (f"MODE = 'agent'\nTASK_ORDER = {json.dumps(order)}\nHOURS = 4.0\nCONCURRENCY = 1\nN_PROBE = {a.n_probe}\nN_TASKS = {a.n_tasks}\n"
+    head = (f"MODE = 'agent'\nTASK_ORDER = {json.dumps(order)}\nHOURS = 4.0\nCONCURRENCY = 1\nN_PROBE = {a.n_probe}\nN_TASKS = {a.n_tasks}\nALSO_BASE = {bool(a.also_base)}\n"
             f"PROBE_MAX_TOKENS = {a.probe_max_tokens}\nADAPTER_DATASET = {a.adapter_dataset!r}\nTOOL_NAMES = {json.dumps(tool_names)}\n"
             f"TOOLS = {json.dumps(tools)}\nimport hashlib\nFILES = {json.dumps(files, indent=1)}\nBUNDLE_HASH = {digest!r}\n")
     code = head + ENV_AND_WHEELS + G1
