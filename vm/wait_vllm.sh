@@ -7,7 +7,7 @@ R=/mnt/biohub/kdata/gemma4; cd $R
 PORT=${PORT:-8000}
 if [ "$PORT" = 8000 ]; then S=vllm; LOG=logs/vllm_serve.log; else S=vllm_$PORT; LOG=logs/vllm_serve_$PORT.log; fi
 tmux kill-session -t $S 2>/dev/null; sleep 3; : > $LOG
-tmux new-session -d -s $S "MODEL=${MODEL:-} ADAPTER=${ADAPTER:-} MODE=${MODE:-graphs} MEM=${MEM:-} ATTN=${ATTN:-} TP=${TP:-4} GPUS=${GPUS:-} PORT=$PORT MAXSEQ=${MAXSEQ:-8} bash ~/gemma4_vm/serve_vllm.sh 2>&1 | tee $LOG"
+tmux new-session -d -s $S "MODEL=${MODEL:-} ADAPTER=${ADAPTER:-} LORA_DYNAMIC=${LORA_DYNAMIC:-} MODE=${MODE:-graphs} MEM=${MEM:-} ATTN=${ATTN:-} TP=${TP:-4} GPUS=${GPUS:-} PORT=$PORT MAXSEQ=${MAXSEQ:-8} bash ~/gemma4_vm/serve_vllm.sh 2>&1 | tee $LOG"
 sleep 15
 for i in $(seq 1 ${WAIT_ROUNDS:-70}); do
   if grep -q "Application startup complete" $LOG; then echo READY; break; fi

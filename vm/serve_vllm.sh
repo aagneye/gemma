@@ -28,7 +28,12 @@ fi
 EXTRA=()
 case "$MODEL" in *12b*) EXTRA+=(--hf-overrides '{"architectures": ["Gemma4ForCausalLM"], "model_type": "gemma4"}');; esac
 [ -n "$ATTN" ] && EXTRA+=(--attention-backend "$ATTN")
-[ -n "$ADAPTER" ] && EXTRA+=(--enable-lora --max-loras 1 --max-lora-rank 32 --lora-modules "main_lora=$ADAPTER")
+# LoRA: with ADAPTER the adapter is mounted at start as main_lora (like the scorer). LORA_DYNAMIC=1 additionally allows
+# hot (un)loading through /v1/load_lora_adapter, so later adapters can be evaluated without restarting the server
+# (a restart frees the GPU for a minute, and on this shared VM another project takes free cards within minutes).
+[ -n "${LORA_DYNAMIC:-}" ] && export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
+if [ -n "$ADAPTER" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank 32 --lora-modules "main_lora=$ADAPTER")
+elif [ -n "${LORA_DYNAMIC:-}" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank 32); fi
 echo "serve_vllm: model=$MODEL tp=$TP gpus=${GPUS:-all} port=$PORT mode=$MODE mem=$MEM maxseq=$MAXSEQ attn=${ATTN:-default} adapter=${ADAPTER:-none}"
 vllm serve models/$MODEL --served-model-name $MODEL \
   --host 127.0.0.1 --port $PORT --tensor-parallel-size $TP --dtype float16 --max-model-len 32768 \
