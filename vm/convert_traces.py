@@ -23,7 +23,9 @@ import argparse, collections, csv, glob, json, re
 from pathlib import Path
 
 # tests/ anywhere under the workspace (never /tmp scratch), plus the config files the grader resets
-PROTECTED_RE = re.compile(r"^(?!/tmp/)(.*/)?tests?/|(^|/)conftest\.py$|(^|/)pytest\.ini$|(^|/)pyproject\.toml$|(^|/)setup\.cfg$|(^|/)tox\.ini$")
+PROTECTED_RE = re.compile(r"^(?!/tmp/)(.*/)?(tests?|testing)/|(^|/)test_[^/]*\.py$|_test\.py$|(^|/)conftest\.py$|(^|/)pytest\.ini$"
+                          r"|(^|/)pyproject\.toml$|(^|/)setup\.cfg$|(^|/)tox\.ini$|(^|/)setup\.py$")   # same set as prepare_data.PROTECTED_RE
+BUDGET_FREE = {"submit_patch", "get_status"}   # not counted against max_tool_calls by the harness
 MASK_ERROR_TYPES = {"FileEditError", "FileWriteError", "FileReadError", "ValueError", "BudgetExceeded"}
 HARMLESS_TRAILING = re.compile(r"^\s*(git\s+(status|diff)|ls\b|cat\b|pwd\b)")
 
@@ -141,7 +143,7 @@ def cut_episode(ep: dict, max_calls: int, declared):
     for t in kept:
         fp = t["args"].get("filepath") if isinstance(t["args"], dict) else None
         if t["tool"] in ("edit_file", "write_file") and fp and PROTECTED_RE.search(norm_path(fp)): return None, "protected_file_edit"
-    n_calls = sum(1 for t in kept if t["tool"] != "submit_patch")
+    n_calls = sum(1 for t in kept if t["tool"] not in BUDGET_FREE)
     if n_calls > max_calls: return None, f"over_{max_calls}_calls"
     if n_calls < 3: return None, "under_3_calls"
     sig = [(t["tool"], json.dumps(t["args"], sort_keys=True)) for t in kept]

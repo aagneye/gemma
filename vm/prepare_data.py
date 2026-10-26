@@ -120,6 +120,7 @@ MAX_READ_LINES = 150
 WINDOW_STEPS = 8               # tool steps per training window
 KEEP_LAST_OBS = 5              # ADK compaction keeps last 5 events; everything earlier is summarised
 MASK_ERROR_TYPES = {"FileEditError", "FileWriteError", "FileReadError", "ValueError", "BudgetExceeded"}
+BUDGET_FREE = {"submit_patch", "get_status"}   # the harness does not count these against max_tool_calls (tools/execution.py)
 
 
 def ok(**kw):  return json.dumps({"status": "ok", **kw}, ensure_ascii=False)
@@ -475,10 +476,11 @@ def window_samples(t, b: Bundle):
             am = {"role": "assistant", "content": s["text"] or "",
                   "tool_calls": [{"type": "function", "id": f"c{i}", "function": {"name": s["tool"], "arguments": s["args"]}}]}
             if s["thought"]: am["reasoning_content"] = s["thought"]
-            if s.get("masked"): am["train"] = False
-            msgs.append(am)
             obs = s["observation"] if s["observation"] is not None else ok()
-            if s["tool"] != "submit_patch": obs = budget_warn(b, obs, used=sum(1 for k in range(i + 1) if tool_steps[k]["tool"] != "submit_patch"))
+            # mask rejected turns from the full observation here, before compaction hides it (all sources, not only traces)
+            if s.get("masked") or masked_observation(s["tool"], obs, set(b.tools)): am["train"] = False
+            msgs.append(am)
+            if s["tool"] not in BUDGET_FREE: obs = budget_warn(b, obs, used=sum(1 for k in range(i + 1) if tool_steps[k]["tool"] not in BUDGET_FREE))
             if i < bb - KEEP_LAST_OBS:      # inside the window but older than the last 5 events -> compacted
                 obs = json.dumps({"status": "ok", "note": "[earlier output compacted]"})
             msgs.append({"role": "tool", "name": s["tool"], "tool_call_id": f"c{i}", "content": obs})
@@ -541,25 +543,33 @@ def rerender(paths, b: Bundle, out, max_steps, first_edit_by, min_tests, repo_ca
     nw = 0; masked = 0; per_repo = collections.Counter()
     with open(out, "w", encoding="utf-8") as f:
         for key, rows in kept:
+            # A trajectory that would run past the call cap never submits within it; from call cap-10 its turns would be
+            # shown with budget warnings while the teacher keeps exploring, which teaches ignoring the warning. Cut such
+            # trajectories at cap-10 (before the first warning) and keep only the prefix; trajectories that fit within
+            # the cap keep everything, including their warned-but-finishing turns.
+            n_total = rows[0]["n_steps"]
+            cut_at = cap_steps if n_total <= cap_steps else cap_steps - 10
+            if n_total > cap_steps: stats["trajectories_cut_before_warning"] += 1
             for r in rows:
                 a0 = int(r["window"].split("-")[0]); used = a0; msgs = []; prev_asst = None; truncated = False
-                if a0 >= cap_steps: stats["windows_past_cap"] += 1; continue
+                if a0 >= cut_at: stats["windows_past_cap"] += 1; continue
                 for m in r["messages"]:
                     m = dict(m)
                     if m["role"] == "system": m["content"] = b.system_prompt
                     elif m["role"] == "user" and not msgs[1:]:
                         m["content"] = rerender_task_prompt(b, m["content"])
                     elif m["role"] == "assistant" and m.get("tool_calls"):
-                        if used >= cap_steps and m["tool_calls"][0]["function"]["name"] != "submit_patch":
-                            truncated = True; break                       # the budget would have ended the session here
+                        if used >= cut_at and m["tool_calls"][0]["function"]["name"] not in BUDGET_FREE:
+                            truncated = True; break                       # the budget (or the pre-warning cut) ends the session here
                         prev_asst = m
-                        if m["tool_calls"][0]["function"]["name"] != "submit_patch": used += 1
+                        if m["tool_calls"][0]["function"]["name"] not in BUDGET_FREE: used += 1
                     elif m["role"] == "assistant" and truncated: break
                     elif m["role"] == "tool":
                         c = m["content"]
                         if prev_asst is not None:
-                            if masked_observation(prev_asst["tool_calls"][0]["function"]["name"], c, set(b.tools)): prev_asst["train"] = False; masked += 1
-                            if prev_asst["tool_calls"][0]["function"]["name"] != "submit_patch" and not c.startswith('{"status": "ok", "note"'):
+                            if prev_asst.get("train") is False: masked += 1          # masked at conversion time (kept)
+                            elif masked_observation(prev_asst["tool_calls"][0]["function"]["name"], c, set(b.tools)): prev_asst["train"] = False; masked += 1
+                            if prev_asst["tool_calls"][0]["function"]["name"] not in BUDGET_FREE and not c.startswith('{"status": "ok", "note"'):
                                 m["content"] = budget_warn(b, c, used)
                     msgs.append(m)
                 if truncated:
@@ -593,7 +603,9 @@ def model_pieces(text):
         while cur < j:
             k = text.find(TR_OPEN, cur, j)
             if k < 0: pieces.append((cur, j)); break
-            pieces.append((cur, k))
+            # include the <|tool_response> token: it is the EOS the model must GENERATE to end a tool-call turn
+            # (generation_config eos_token_id includes it), so it needs a supervised target like <turn|> does
+            pieces.append((cur, k + len(TR_OPEN)))
             kk = text.find(TR_CLOSE, k, j)
             cur = (kk + len(TR_CLOSE)) if kk >= 0 else j
         pos = j
