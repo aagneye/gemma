@@ -12,9 +12,16 @@ R=/mnt/biohub/kdata/gemma4; cd $R; source scorer-host-venv/bin/activate
 export REPLICA_TIME_SCALE=${REPLICA_TIME_SCALE:-1}   # replica-only clock scaling (patch_replica_clock.py)
 export LOCAL_INFERENCE_URL=http://127.0.0.1:${PORT:-8000}/v1
 OUT=results/replica/$TAG; rm -rf $OUT; mkdir -p $OUT
-echo "$(date -u) run_replica sub=$SUB tag=$TAG n=$N time=$T conc=$C scale=$REPLICA_TIME_SCALE url=$LOCAL_INFERENCE_URL" > $OUT/run.log
+# REPO_FILTER=rich|fastapi restricts the run to the Kaggle-sound tasks of one repo (cross-fit adapter evaluation:
+# an adapter trained on fastapi traces is evaluated on rich tasks only, and vice versa); N is ignored then.
+if [ -n "${REPO_FILTER:-}" ]; then
+  SEL="--task-ids $(python3 -c "import csv;print(' '.join(r['instance_id'] for r in csv.DictReader(open('results/kaggle_soundness.csv')) if r['sound']=='True' and r['instance_id'].startswith('${REPO_FILTER}_')))")"
+else
+  SEL="--order-csv results/kaggle_soundness.csv --first $N"
+fi
+echo "$(date -u) run_replica sub=$SUB tag=$TAG n=$N repo=${REPO_FILTER:-all} time=$T conc=$C scale=$REPLICA_TIME_SCALE url=$LOCAL_INFERENCE_URL" > $OUT/run.log
 python ~/gemma4_vm/local_score.py --root data/comp --sandbox subprocess --submission $SUB --results $OUT/agent_run \
-  --time $T --concurrency $C --order-csv results/kaggle_soundness.csv --first $N >> $OUT/run.log 2>&1
+  --time $T --concurrency $C $SEL >> $OUT/run.log 2>&1
 python3 - "$OUT" <<'PY'
 import csv, json, sys
 out = sys.argv[1]; rows = [json.loads(l) for l in open(out + "/agent_run/task_results.jsonl")]
