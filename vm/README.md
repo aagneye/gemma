@@ -134,3 +134,10 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - `compare_runs.py` now prints p90 durations, a per-repo split and the failure-bucket shift matrix (needs
   `trace_analysis.csv` from `analyze_traces.py` in both dirs). `sub_status.py --stats` gives per-config LB mean/SE.
 - Plan: `research/PLAN_TO_WIN.md` (approved Oct 25). Parallel sessions log to `research/ledger/*.md`.
+
+## 2026-10-26: debug pass findings (see research/STATE.md for the list)
+- `start_train_free.sh`: single-GPU launches no longer fail the SYNC_OK gate; `EXCLUDE_GPUS` (default 0) everywhere; `launch_train.sh` defaults to GPUs 1,2,3.
+- `prepare_data.py`: `<|tool_response>` supervised; masking at conversion time for all sources; long trajectories cut at cap-10; `BUDGET_FREE = {submit_patch, get_status}`. Rebuild with `vm/build_e4b_v2_data.sh` (also launches E4B v1).
+- `daily_ship.py`: failures reset per UTC day; ledger by new ref. `sub_status.py`: paged submissions; messages must start with "<bundle>:".
+- `analyze_traces.py`: timeouts from the error column; nudges from `continuation_nudge` events; `path_traversal` edit-error kind.
+- Oct 31 pushes live in the user crontab (`crontab -l`), not tmux.
