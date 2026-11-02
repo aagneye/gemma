@@ -141,3 +141,7 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - `daily_ship.py`: failures reset per UTC day; ledger by new ref. `sub_status.py`: paged submissions; messages must start with "<bundle>:".
 - `analyze_traces.py`: timeouts from the error column; nudges from `continuation_nudge` events; `path_traversal` edit-error kind.
 - Oct 31 pushes live in the user crontab (`crontab -l`), not tmux.
+
+## 2026-11-02: build and status pitfalls
+- `build_v4.py --spec <file>` without `--only` also rebuilds the legacy bundles (`v4_single`, `v4_phased`, `v5_single`) in `--out-root`. The build is deterministic, but re-check a shipped bundle's digest afterwards (`make_notebook.py` prints it; the shipped notebook's first cell carries it) before the shipper touches it.
+- `sub_status.py` needs the project venv: `.venv/bin/python ~/gemma4_vm/sub_status.py --n 3` (kaggle 2.2.4). The system `python3` has kaggle 1.7.4.5, whose `competition_submissions()` has no `page_number`.
