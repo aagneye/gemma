@@ -1,4 +1,4 @@
-import json, sys, hashlib
+import json, re, sys, hashlib
 from pathlib import Path
 pkg = Path(sys.argv[1]); out = Path(sys.argv[2]); slug = sys.argv[3]; title = sys.argv[4]
 files = {}
@@ -6,7 +6,8 @@ for p in sorted(pkg.rglob("*")):
     if p.is_file(): files[p.relative_to(pkg).as_posix()] = p.read_text(encoding="utf-8")
 assert "agent.yaml" in files and all(not k.endswith((".sh", ".gitkeep")) for k in files)
 digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()[:16]
-md = f"# {title}\n\nWrites the agent bundle (single LlmAgent, 6 core tools, gemma-4-12b-it-qat-w4a16-ct, thinking ON, no LoRA) and packages it as `submission.zip`.\nBundle hash: `{digest}`. The finished agent is evaluated by the competition harness; no GPU is needed to assemble it."
+model = (re.search(r"^\s*model:\s*(\S+)", files["agent.yaml"], re.M) or [None, "?"])[1]
+md = f"# {title}\n\nWrites the agent bundle (model {model}, {len(files)} files) and packages it as `submission.zip`.\nBundle hash: `{digest}`. The finished agent is evaluated by the competition harness; no GPU is needed to assemble it."
 code = f'''import json, os, zipfile, hashlib
 from pathlib import Path
 
