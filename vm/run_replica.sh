@@ -1,26 +1,33 @@
 #!/usr/bin/env bash
 # Replica of the public scorer on the VM: scorer-host-venv (Kaggle host packages) + subprocess sandbox + vLLM on T4s.
-#   [PORT=8000] [REPLICA_TIME_SCALE=k] bash run_replica.sh <submission_dir> <tag> [first=50] [time_min=36] [concurrency=3]
+#   [PORT=8000] [REPLICA_TIME_SCALE=k] [ROOT=data/comp] [ORDER_CSV=results/kaggle_soundness.csv] [TASK_LIST=file]
+#     bash run_replica.sh <submission_dir> <tag> [first=50] [time_min=36] [concurrency=3]
 # Same task order as the Kaggle-environment notebooks (Kaggle-sound, round-robin by repo). time_min scales the
 # 8-min budget for T4 speed (31B decodes ~3.5x slower than on L4); prefer time_min = the bundle's own
 # max_time_minutes plus REPLICA_TIME_SCALE (clock scaling, see patch_replica_clock.py). PORT selects the vLLM server
 # (one per GPU for E4B experiments). Output: results/replica/<tag>/{results.csv,agent_run/,run.log}
+# ROOT is the task set (tasks.jsonl, snapshots/, graphs/, embeddings/, wheels/); ORDER_CSV its soundness table
+# (instance_id,repo,gold_pass,empty_pass,sound); TASK_LIST a file of instance ids (one per line, # comments) that
+# replaces the first-N selection, e.g. the practice swing set or an EVAL subset.
 set -u
 SUB=$1; TAG=$2; N=${3:-50}; T=${4:-36}; C=${5:-3}
 if [ "$T" = auto ]; then T=$(grep -E "max_time_minutes:" "$SUB/eval_config.yaml" | head -1 | sed "s/.*: *//"); fi   # the bundle's own budget
 R=/mnt/biohub/kdata/gemma4; cd $R; source scorer-host-venv/bin/activate
+ROOT=${ROOT:-data/comp}; ORDER_CSV=${ORDER_CSV:-results/kaggle_soundness.csv}
 export REPLICA_TIME_SCALE=${REPLICA_TIME_SCALE:-1}   # replica-only clock scaling (patch_replica_clock.py)
 export LOCAL_INFERENCE_URL=http://127.0.0.1:${PORT:-8000}/v1
 OUT=results/replica/$TAG; rm -rf $OUT; mkdir -p $OUT
-# REPO_FILTER=rich|fastapi restricts the run to the Kaggle-sound tasks of one repo (cross-fit adapter evaluation:
+# REPO_FILTER=rich|fastapi restricts the run to the sound tasks of one repo (cross-fit adapter evaluation:
 # an adapter trained on fastapi traces is evaluated on rich tasks only, and vice versa); N is ignored then.
-if [ -n "${REPO_FILTER:-}" ]; then
-  SEL="--task-ids $(python3 -c "import csv;print(' '.join(r['instance_id'] for r in csv.DictReader(open('results/kaggle_soundness.csv')) if r['sound']=='True' and r['instance_id'].startswith('${REPO_FILTER}_')))")"
+if [ -n "${TASK_LIST:-}" ]; then
+  SEL="--task-ids $(grep -v '^#' "$TASK_LIST" | tr -s ' \n' ' ')"
+elif [ -n "${REPO_FILTER:-}" ]; then
+  SEL="--task-ids $(python3 -c "import csv;print(' '.join(r['instance_id'] for r in csv.DictReader(open('$ORDER_CSV')) if r['sound']=='True' and r['instance_id'].startswith('${REPO_FILTER}_')))")"
 else
-  SEL="--order-csv results/kaggle_soundness.csv --first $N"
+  SEL="--order-csv $ORDER_CSV --first $N"
 fi
-echo "$(date -u) run_replica sub=$SUB tag=$TAG n=$N repo=${REPO_FILTER:-all} time=$T conc=$C scale=$REPLICA_TIME_SCALE url=$LOCAL_INFERENCE_URL" > $OUT/run.log
-python ~/gemma4_vm/local_score.py --root data/comp --sandbox subprocess --submission $SUB --results $OUT/agent_run \
+echo "$(date -u) run_replica sub=$SUB tag=$TAG root=$ROOT n=$N list=${TASK_LIST:-} repo=${REPO_FILTER:-all} time=$T conc=$C scale=$REPLICA_TIME_SCALE url=$LOCAL_INFERENCE_URL" > $OUT/run.log
+python ~/gemma4_vm/local_score.py --root $ROOT --sandbox subprocess --submission $SUB --results $OUT/agent_run \
   --time $T --concurrency $C $SEL >> $OUT/run.log 2>&1
 python3 - "$OUT" <<'PY'
 import csv, json, sys
