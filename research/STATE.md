@@ -177,3 +177,14 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Docker with no internet, the container seeing only the task files and the model server;
   - or running directly on the VM with the internet cut off (`unshare -rn`).
   - The agent runs of Phase 2 execute the same code, so the same decision covers them.
+- 16:20 UTC — **user decision: train the 31B on the VM's T4s after the agent tests, not on Kaggle.** Consequences:
+  - Context drops to 8k: 16k does not fit 16 GB cards (the Kaggle trial peaked at 14.3–16.8 GiB allocated, 18.6 GiB reserved at 16k).
+  - fp16 with GradScaler (T4s have no bf16), roughly 2× slower than L4: an estimated 20–25 ms/token, so about 12–20 h for 2–3M tokens.
+  - Testing pauses during the run.
+  - Next: a T4 trial (8k fit probe + 20 steps) in the gap after the swing pair ends (about 02:00–04:00 UTC Nov 4), then the vLLM server restarts.
+  - The bf16 training base `gemma-4-31B-it-qat-q4_0-unquantized` (62 GB) is downloading (tmux `dl31b`).
+- **Trainer session result** (Kaggle 4×L4 trial, details in `research/raw/12_kaggle_31b_training.md`):
+  - The 31B with r32 trains at 16k on 4×L4 (10.9 ms/token; 1.4 h of quota).
+  - The adapter (467 MiB fp16) passes packaging, bundle validation and a hot-swap on the VM server.
+  - Its `vm/train_qlora.py` options (`--pipeline`, `--attn qchunk`, bf16 path, `--fit-probe`, `--deadline-min`, `--optim adamw`) serve the T4 run too. Reviewed (default E4B/12B paths unchanged; CPU equivalence test of qchunk vs eager attention passes) and committed.
+- Swing pair at 16:18 UTC: Budget-Fit V5 3/3 and v7 3/3 of the first 3 tasks; about 3 tasks/h per run → both passes end about 02:00–04:00 UTC Nov 4.
