@@ -145,3 +145,6 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 ## 2026-11-02: build and status pitfalls
 - `build_v4.py --spec <file>` without `--only` also rebuilds the legacy bundles (`v4_single`, `v4_phased`, `v5_single`) in `--out-root`. The build is deterministic, but re-check a shipped bundle's digest afterwards (`make_notebook.py` prints it; the shipped notebook's first cell carries it) before the shipper touches it.
 - `sub_status.py` needs the project venv: `.venv/bin/python ~/gemma4_vm/sub_status.py --n 3` (kaggle 2.2.4). The system `python3` has kaggle 1.7.4.5, whose `competition_submissions()` has no `page_number`.
+- Never `scp` over a script that a running bash process is executing (bash reads scripts incrementally; the tail of a long `run_replica.sh` run would read the new bytes). Copy to `<name>.new` and `mv` it into place.
+- `/mnt` (the ephemeral disk) is root-owned; put temporary data under `/mnt/biohub/kdata/gemma4/tmp` (the root disk has only ~24 GB free).
+- `run_replica.sh` knobs: `ROOT` (task set dir, default `data/comp`), `ORDER_CSV` (soundness table), `TASK_LIST` (file of instance ids, `#` comments), e.g. `TASK_LIST=results/lists/practice_swing17.txt SCALE=9 bash run_pair.sh ...`.

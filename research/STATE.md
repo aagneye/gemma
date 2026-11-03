@@ -148,3 +148,24 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Round 4** (v6.1 vs v7) started 22:21 UTC. At 03:29: 17 common tasks, v6.1 7 vs v7 7, no wins or losses; v7 traces: graph-tool calls 0, path-traversal 0, exit-124 0, harness timeouts 0. Expected end ≈ 12:30 UTC.
 - LB 03:30 UTC: 4,453 teams; top 0.29; 0.24 ×8, 0.22 ×61, 0.20 ×280, 0.18 ×686. Ours 0.18, rank 833 (350 teams above). v6 (57896193) still PENDING after 22 h; the shipper waits.
 - **Own LB history by command settings (31B draws):** harness limit 240 s + prompt `timeout 150` pytest wrapper — pub022 0.15, v3_31b 0.17, v3t2k_31b 0.17 → **mean 0.163 (n = 3)**; harness limit 90 s + prompt `timeout 30`/`timeout 60` wrappers (introduced in v4) — v4_single 0.13, v5 0.18/0.12/0.15/0.10/0.15/0.15 → **mean 0.140 (n = 7)**. Δ 0.023 ≈ 1.3 tasks (≈ 1.5 SE), confounded with the v4/v5 prompt text and dates, but the same direction and size as the public comparison (Budget-Fit 0.166 vs our v5 0.142). The v4/v5 gains were measured on practice tasks, where no command ever hits a limit. Supports v7 (240 s, pytest wrapper 120 s; `python -c` checks keep `timeout 30`).
+- 13:50 UTC — **round 4 final:** v6.1 21/50, v7 21/50 (+0; wins rich_3480, rich_3470; losses fastapi_11194, rich_3676); mean time −2.5 %; mean calls 22.5 vs 22.6.
+  - v7 traces: graph calls 0, path-traversal 0, exit-124 0, harness timeouts 0.
+  - **Correction of the Nov 2 note:** the VM replica *does* have the public graphs and embeddings (`data/comp/graphs`, `data/comp/embeddings`). All 50 v7 traces carry the "Code Intelligence Tools" paragraph, and v7 still made 0 graph calls.
+  - v7 met its ship rule; notebook `aagneye/gemma4-31b-v7` v1 built, its zip byte-identical to `submissions/v7`.
+- **v6 (57896193) failed: "Your submission notebook exceeded the allowed runtime"** (the 12-h cap).
+  - The shipper had already re-submitted v6 at 12:46 UTC (57948041, pending; may fail the same way).
+  - VM token profile on the same 50 tasks (model output per task): v5.1 7.0k, v6 8.0k (+14 %, round 1), v6.1 7.1–7.2k, v7 6.9k (rounds 3–4).
+  - v6's extra generation plausibly pushed it past 12 h. v7 is about +3 % vs v5.1, plus the 240-s command limit, so its runtime risk is unknown.
+- 15:00 UTC — **user decision: the next slots ship Budget-Fit V5** (public; files sha256 `c9829b6a…`; 10 of 10 public draws finished, mean 0.166).
+  - `submissions/budgetfit_v5` was rebuilt from our saved copy of the public notebook (files hash matches the public config); VALID + COMPILED.
+  - Notebook `aagneye/gemma4-31b-budgetfit-v5` v1, zip byte-identical.
+  - `results/ship.txt`: budgetfit_v5, v5_single (fallback), `#HOLD` v7.
+- 15:22 UTC — the 31B vLLM server was restarted with `LORA_DYNAMIC=1` (`--enable-lora --max-lora-rank 32`; KV cache 26,400 tokens).
+  - GPU filler (tmux `rep_sw`): **Budget-Fit V5 vs v7 on the 17 practice swing tasks** (`results/lists/practice_swing17.txt`), 2 passes, scale 9. Readout: score and per-task token/time profile of v7 against the runtime-safe incumbent.
+- **Plan adjustment (follows the user's choice):** the incumbent is now Budget-Fit V5.
+  - Phase 2's EVAL pair becomes **Budget-Fit V5 vs v7**. v7 ships only with ≥ +3 on EVAL *and* no more output tokens / time per task than Budget-Fit.
+  - The training data comes from the winner.
+- **Phase 1 started:**
+  - SWE-rebench metadata (3 parquet files, 245 MB) in `datasets/swe-rebench/`.
+  - `vm/rebench_select.py` → 1,018 candidates from 448 repos. Filters: no competition or web repos, flat layout, 1–3 `.py` source files, no async, 1–20 F2P, issue/test llm scores ≤ 2, PRs since 2019, every non-dev package present in `scorer-host-venv`; cap 15 per repo.
+  - `vm/run_replica.sh` now takes `ROOT` / `ORDER_CSV` / `TASK_LIST`.
