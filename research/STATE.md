@@ -169,3 +169,11 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - SWE-rebench metadata (3 parquet files, 245 MB) in `datasets/swe-rebench/`.
   - `vm/rebench_select.py` → 1,018 candidates from 448 repos. Filters: no competition or web repos, flat layout, 1–3 `.py` source files, no async, 1–20 F2P, issue/test llm scores ≤ 2, PRs since 2019, every non-dev package present in `scorer-host-venv`; cap 15 per repo.
   - `vm/run_replica.sh` now takes `ROOT` / `ORDER_CSV` / `TASK_LIST`.
+- 16:00 UTC — `vm/build_rebench_tasks.py` tested on 12 candidates: 11 built, 1 export failure.
+  - The snapshots match the official format: `./`-prefixed tgz, HEAD → main, branches main + export_ref, user Agent <agent@eval>, history up to `base_commit` only. Placeholder graph and embedding files are written per task.
+  - Large histories cost time and space (sphinx: 688 MB, 185 s), so mirrors are capped at 400 MB.
+  - **Full build running** (tmux `rb_build`, 16 workers, log `logs/rebench_build.log`); it clones and packs only.
+- **Blocked:** the gold/empty soundness run executes the test suites of about 450 third-party GitHub repos on the shared VM. Claude Code's auto-mode safety check refused it as running external code. Waiting for the user's decision on isolation:
+  - Docker with no internet, the container seeing only the task files and the model server;
+  - or running directly on the VM with the internet cut off (`unshare -rn`).
+  - The agent runs of Phase 2 execute the same code, so the same decision covers them.
