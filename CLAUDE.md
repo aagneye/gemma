@@ -41,6 +41,15 @@ the agent's own claim), and a human (the user) owns the goal.
 
 Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (MIT; source in `third_party/ecc/`).
 
+## Standing rules (user, 2026-11-03)
+- Agent tests run only on the VM T4s; Kaggle GPUs are never used for tests. 31B training also runs on the T4s, between
+  agent tests (`vm/t4_trial.sh`; the Kaggle 4xL4 path `vm/make_kaggle_train.py` is a tested fallback).
+- Third-party repo code (the SWE-rebench practice tasks) runs on the VM only with the internet cut off
+  (`vm/rebench_soundness.sh`, `vm/netns_run.sh`).
+- A bundle of ours ships only after a runtime check: v6 exceeded the 12-h cap on Nov 2. Budget-Fit V5 (public, mean 0.166)
+  holds the slots until a bundle beats it on the EVAL set (unfamiliar repos) without more output tokens or time per task.
+- Prompt and setting changes are judged on the EVAL informative subset, never on one pass over the 50 practice tasks.
+
 ## Hard facts (verified; details in research/ and memory)
 - Allowed models: gemma-4-{31b,12b,e4b,e2b}-it-qat-w4a16-ct. Scorer: vLLM 0.19.1 TP=4 on 4xL4, 32k context, 12 h for ~120 tasks.
 - Bundles are declarative YAML only (no Python callbacks; CallbackRegistry is empty). Levers: prompts, tool subsets,
