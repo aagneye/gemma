@@ -188,3 +188,15 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - The adapter (467 MiB fp16) passes packaging, bundle validation and a hot-swap on the VM server.
   - Its `vm/train_qlora.py` options (`--pipeline`, `--attn qchunk`, bf16 path, `--fit-probe`, `--deadline-min`, `--optim adamw`) serve the T4 run too. Reviewed (default E4B/12B paths unchanged; CPU equivalence test of qchunk vs eager attention passes) and committed.
 - Swing pair at 16:18 UTC: Budget-Fit V5 3/3 and v7 3/3 of the first 3 tasks; about 3 tasks/h per run → both passes end about 02:00–04:00 UTC Nov 4.
+- 16:45 UTC — **user decision: the new projects' code runs directly on the VM with the internet cut off.**
+  - `vm/rebench_soundness.sh`: gold patch twice and empty patch once, inside `unshare -rn` (loopback up, `TMPDIR` on the data disk). "Sound" also requires gold setup + grading ≤ 180 s.
+  - Trial on 11 tasks: **7 sound (64 %)**, gold runs 6–24 s.
+- `vm/netns_run.sh` + `vm/netns_bridge.py` run a command in a no-internet namespace, with 127.0.0.1:8000 bridged to the host's vLLM through a unix socket.
+  - Tested: the model list answers, HTTPS to huggingface.co fails, and no processes are left behind.
+  - Phase 2 agent runs go through it.
+- **Build:** 963+ snapshots (30 GB). The last two repos (sympy, sphinx: long histories, ~700 MB snapshots) are still exporting.
+- **Queued on the VM:**
+  - tmux `rb_sound`: soundness of all tasks once the build ends (CONC 16, est. 1.5–2 h).
+  - tmux `t4trial` (`vm/t4_trial.sh`): after the swing pair, stop vLLM; run a 31B LoRA trial on the 4 T4s (20 steps, 8k, fp16, fit probe, 120-min deadline, 150-min timeout); then restart vLLM with LoRA.
+  - The new trainer is deployed to `~/gemma4_vm`; the CPU equivalence test passes with the VM's versions (transformers 5.17, peft 0.21.2, torch 2.8).
+- 31B training base downloaded: 59 GB, `models/gemma-4-31B-it-qat-q4_0-unquantized`.
