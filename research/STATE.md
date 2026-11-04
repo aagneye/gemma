@@ -200,3 +200,26 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - tmux `t4trial` (`vm/t4_trial.sh`): after the swing pair, stop vLLM; run a 31B LoRA trial on the 4 T4s (20 steps, 8k, fp16, fit probe, 120-min deadline, 150-min timeout); then restart vLLM with LoRA.
   - The new trainer is deployed to `~/gemma4_vm`; the CPU equivalence test passes with the VM's versions (transformers 5.17, peft 0.21.2, torch 2.8).
 - 31B training base downloaded: 59 GB, `models/gemma-4-31B-it-qat-q4_0-unquantized`.
+
+## 2026-11-04 — overnight results; EVAL and TRAIN runs started
+- **Swing pair** (Budget-Fit V5 vs v7, 17 practice swing tasks × 2 passes, scale 9):
+  - Budget-Fit 9 + 9 = **18/34**, v7 11 + 9 = **20/34** (+2 in total; pass 1 3W/1L, pass 2 3W/3L): noise.
+  - Per task, v7 used **+20 % calls** (23.7 vs 19.7), **+22 % output tokens** (8.3k vs 6.8k) and +7 % time (2,399 vs 2,235 s).
+  - So v7 is **not runtime-safe** next to Budget-Fit (v6's +14 % over v5.1 already exceeded 12 h). It stays on hold.
+- **T4 trial** (`vm/t4_trial.sh`, 03:00 UTC): the 31B LoRA r32 trains on the 4 T4s at 8k.
+  - Fit probe at 8,192 tokens OK; peak 10.0–11.4 GB per card (reserved ≤ 12.9 of 15 GB).
+  - **16.1 ms/token** (62 tok/s); 20 steps in 32.9 min; loss finite, 0 skipped.
+  - A full run of 2–3M tokens ≈ 9–13 h. vLLM was back at 03:29 UTC with LoRA hot-swap.
+- **Soundness:** 510 of 983 built tasks are sound (gold twice, empty fails) from 265 repos; finished 17:32 UTC Nov 3. Only 3 tasks passed with an empty patch.
+- **Split** (`vm/rebench_split.py`, seed 0, by repo):
+  - **EVAL 109 tasks / 61 repos** (difficulty 0:42, 1:45, 2:19, 3:3).
+  - **TRAIN 339 tasks / 196 repos.**
+  - 8 repos left out (more than 10 tasks or snapshots over 300 MB): sphinx, networkx, sympy, pyflakes, sqllineage, XlsxWriter, snewpy, fairlearn.
+- **The GPUs sat idle 03:30–15:00 UTC:** the next run was not chained after the trial (scheduling gap).
+- 15:01 UTC, tmux `rep_eval`, no internet through `vm/netns_run.sh`:
+  - **EVAL pair Budget-Fit V5 vs v7** (~28 h);
+  - chained with the **TRAIN pass of Budget-Fit V5** (concurrency 4, ~48 h). Budget-Fit is the shipped config, so its runs are the on-policy training data.
+  - Only an EVAL result of v7 ≥ +3 with no more tokens/time than Budget-Fit would switch the TRAIN policy.
+- **Kaggle:** v6 resubmission 57948041 still pending after 26 h; Budget-Fit V5 waits behind it.
+  - LB 15:00 UTC: 4,626 teams; top 0.29; 0.24 ×9, 0.22 ×64, 0.20 ×307, 0.18 ×715.
+  - Ours 0.18, **rank 856** (381 teams above).
