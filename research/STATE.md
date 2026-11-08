@@ -223,3 +223,26 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Kaggle:** v6 resubmission 57948041 still pending after 26 h; Budget-Fit V5 waits behind it.
   - LB 15:00 UTC: 4,626 teams; top 0.29; 0.24 ×9, 0.22 ×64, 0.20 ×307, 0.18 ×715.
   - Ours 0.18, **rank 856** (381 teams above).
+
+## 2026-11-08 — Budget-Fit draws, EVAL verdict, training round started
+- **Kaggle draws:**
+  - v6 resubmission 57948041 **0.15** (it finished this time: v6 is borderline on the 12-h cap).
+  - Budget-Fit V5: 57990279 **0.13** (Nov 4), 58017434 **0.17** (Nov 5), 58039243 **0.17** (Nov 6), 58073200 **0.17** (Nov 7). Mean 0.16 over 4, matching its public 0.166.
+  - 58108880 (Nov 8, 00:12) pending. Scoring now finishes within the day, so the 00:10 slots are used daily again.
+- **LB 05:30 UTC Nov 8:** 5,071 teams; top 0.29; 0.24 ×11, 0.22 ×67, 0.20 ×384, 0.18 ×841. Ours 0.18, **rank 928** (463 above).
+- **EVAL pair** (109 unfamiliar-repo tasks, no internet, scale 9): **Budget-Fit V5 47/109 (43 %) vs v7 40/109 (37 %): −7** (2W/9L, sign test p = 0.065); v7 mean time +18 % (1,779 → 2,092 s).
+  - On unfamiliar repos our v6/v7 instructions *hurt*, as the hidden-set draws suggested (v5 0.14 vs Budget-Fit 0.166).
+  - The practice set showed the opposite (+2): **the EVAL set agrees with Kaggle, the practice set does not.**
+  - v7 stays on hold. Budget-Fit V5 is the policy for TRAIN and for the adapter.
+  - EVAL is easier than the hidden set (43 % vs ~17 %); the gate uses its informative tasks.
+- **TRAIN pass** (Budget-Fit V5, 339 tasks): **132 resolved (39 %)**, finished 18:54 UTC Nov 7.
+  - The GPUs then idled ~10.5 h (not chained, again). Everything after this point is chained.
+  - Episodes after the `FT_DATA_SPEC` filters: **74 from 74 tasks** (dropped: protected-file edits 26, identical consecutive calls 15, over 24 calls 15, nudge 1, no submit 1), 171 windows.
+  - That is **below the pre-registered floor of 100 episodes**.
+- **05:32 UTC — training round chained** (`vm/rft_round.sh`, tmux `rft`, log `logs/rft_bf5_v2.log`):
+  1. Second pass of Budget-Fit V5 at **temperature 0.6** on the 132 solved TRAIN tasks (`submissions/budgetfit_v5_t06`; `results/lists/bf5_train_solved.txt`; no internet; ~19 h).
+  2. Episodes from both passes (≤ 3 per task), tokenized at 12k with the serving model's chat template.
+  3. Floor check (≥ 100 episodes / ≥ 50 tasks, else no training).
+  4. 31B LoRA r32 on the 4 T4s: vLLM stopped; fit probe at 12k with fallback 9k/6k; 1 epoch, LR 1e-4, grad-accum 8, 12-h deadline.
+  5. vLLM restarted with LoRA hot-swap.
+  - Expected: data ~01:00 UTC Nov 9, training done ~12:00–14:00 UTC Nov 9. Then the gate (adapter vs base on EVAL + practice swing set).
