@@ -73,8 +73,15 @@ def main():
     ap.add_argument("--per-repo", type=int, default=12); ap.add_argument("--since", default="2019-01-01")
     ap.add_argument("--max-llm-score", type=int, default=2, help="max issue_text_score and test_score (0 best, 3 worst)")
     ap.add_argument("--max-f2p", type=int, default=20); ap.add_argument("--max-src-files", type=int, default=3)
+    ap.add_argument("--extra-packages", help="file of package names counted as installed (the TRAIN-pool venv scorer-host-venv-plus)")
+    ap.add_argument("--exclude-repos-file", help="file of repos (owner/name) never selected, e.g. the EVAL repos")
+    ap.add_argument("--exclude-ids-file", help="build_log.csv or id list of tasks already built (matched on rebench_id or instance_id)")
     a = ap.parse_args()
     installed = {norm(d.metadata["Name"]) for d in md.distributions() if d.metadata["Name"]}
+    lines = lambda p: [l.strip() for l in open(p) if l.strip() and not l.startswith("#")] if p else []
+    installed |= {norm(x) for x in lines(a.extra_packages)}
+    skip_repos = {x.lower() for x in lines(a.exclude_repos_file)}
+    skip_ids = {c for l in lines(a.exclude_ids_file) for c in l.split(",")[:3]}
     rows, seen = [], set()
     for f in sorted(glob.glob(f"{a.data}/*.parquet")):
         for r in pq.read_table(f).to_pylist():
@@ -84,6 +91,8 @@ def main():
     for r in rows:
         repo = r["repo"]; meta = r.get("meta") or {}; ls = meta.get("llm_score") or {}
         if repo.lower() in COMPETITION: stage["x_competition"] += 1; continue
+        if repo.lower() in skip_repos: stage["x_excluded_repo"] += 1; continue
+        if r["instance_id"] in skip_ids: stage["x_already_built"] += 1; continue
         if str(r.get("created_at") or "") < a.since: stage["x_old"] += 1; continue
         f2p = list(r.get("FAIL_TO_PASS") or [])
         if not 1 <= len(f2p) <= a.max_f2p: stage["x_f2p"] += 1; continue
