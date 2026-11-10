@@ -9,7 +9,7 @@ set -u
 ROOT=${1:-data/rebench}; TAG=${2:-rebench}; CONC=${CONC:-16}; MAX_SEC=${MAX_SEC:-180}
 R=/mnt/biohub/kdata/gemma4; cd $R
 export TMPDIR=$R/tmp/sound_$TAG; mkdir -p $TMPDIR results/$TAG/pass1 results/$TAG/pass2
-PY=$R/scorer-host-venv/bin/python
+PY=$R/${VENV:-scorer-host-venv}/bin/python   # VENV=scorer-host-venv-plus only for TRAIN-pool task sets
 check() {   # <mode> <out_dir> [task ids]
   unshare -rn sh -c "ip link set lo up && exec $PY $HOME/gemma4_vm/gold_check.py --root $ROOT --out $2/$1.csv --mode $1 \
     --sandbox subprocess --concurrency $CONC --stub data/grader/submission_stub --verification-timeout 300 ${3:+--task-ids $3}"

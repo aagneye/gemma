@@ -12,7 +12,7 @@
 set -u
 SUB=$1; TAG=$2; N=${3:-50}; T=${4:-36}; C=${5:-3}
 if [ "$T" = auto ]; then T=$(grep -E "max_time_minutes:" "$SUB/eval_config.yaml" | head -1 | sed "s/.*: *//"); fi   # the bundle's own budget
-R=/mnt/biohub/kdata/gemma4; cd $R; source scorer-host-venv/bin/activate
+R=/mnt/biohub/kdata/gemma4; cd $R; source ${VENV:-scorer-host-venv}/bin/activate   # VENV=scorer-host-venv-plus only for TRAIN-pool tasks
 ROOT=${ROOT:-data/comp}; ORDER_CSV=${ORDER_CSV:-results/kaggle_soundness.csv}
 export REPLICA_TIME_SCALE=${REPLICA_TIME_SCALE:-1}   # replica-only clock scaling (patch_replica_clock.py)
 export LOCAL_INFERENCE_URL=http://127.0.0.1:${PORT:-8000}/v1
