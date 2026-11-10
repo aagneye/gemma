@@ -1,0 +1,35 @@
+# Test-time packages that SWE-rebench TRAIN-pool tasks need and the Kaggle image lacks (the most frequent "missing"
+# names of rebench_select.py, Nov 8), installed into scorer-host-venv-plus only (never the EVAL/Kaggle venv).
+# Left out: maturin (Rust builds), nose (not Python 3.12), dataclasses (backport), the astropy pytest plugins and asdf.
+pytest-mock
+mock
+appdirs
+hypothesis
+docopt
+pbr
+pyrsistent
+responses
+pynacl
+isodate
+lazy-object-proxy
+argcomplete
+requests-mock
+stevedore
+vcrpy
+rdflib
+freezegun
+executing
+pure-eval
+stack-data
+zope-interface
+pytest-forked
+ply
+fasteners
+bcrypt
+tokenize-rt
+semver
+mergedeep
+ghp-import
+paramiko
+pyyaml-env-tag
+flaky
