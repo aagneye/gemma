@@ -272,3 +272,12 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Order: the 77 `test_score` ≤ 1 tasks first, then the 32 others (`results/lists/rebench_eval_ts.txt`), then the 17 practice swing tasks (`lora1_sw`).
   - ETA: the 77 by ~20:00 UTC Nov 11; all by ~15:00 UTC Nov 12.
 - **Queued behind it** (tmux `after_g1`): Budget-Fit at T 0.6 on the 207 unsolved TRAIN tasks (`bf5t06_train3`), for new round-2 tasks.
+- **Workstream B started** (CPU, beside Gate 1):
+  - `scorer-host-venv-plus` = the Kaggle freeze + 32 test packages (`vm/extra_test_packages.txt`, each installed pinned to the existing versions; tmux `venvplus`). For TRAIN-pool tasks only; EVAL stays on the Kaggle-faithful venv.
+  - `vm/rebench_select.py --extra-packages --exclude-repos-file results/lists/eval_repos.txt --exclude-ids-file data/rebench/build_log.csv --per-repo 20` → **611 candidates from 215 repos** (the 61 EVAL repos and the 873 tasks already built are excluded; difficulty 0:209, 1:254, 2:133, 3:15).
+  - Snapshots: tmux `rb2_build` → `data/rebench2`.
+  - Soundness: tmux `rb2_sound` with `VENV=scorer-host-venv-plus`, chained after both builds.
+- **C1 draft** (`vm/prompts/budgetfit_c1.md`): Budget-Fit V5 + one bullet in step 3 ("Check the Behaviour, Not Just the Example"; 107 words, no braces). Waiting for the user's review.
+  - It makes the one existing verification command cover 2–3 related cases plus the existing test file, without new calls.
+  - Target: the ~45 narrow-fix failures of `bf5_eval`.
+  - Budget-Fit's own text is now tracked in `vm/prompts/budgetfit_v5.md`.
