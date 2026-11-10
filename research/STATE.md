@@ -294,3 +294,11 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   5. `lora2` packaged, hot-loaded and run on all 109 EVAL at scale 25.
   - Dropped from the plan: the 58 big-repo tasks (slow snapshots, famous repos).
   - Expected: C1 verdict ~Nov 13 10:00 UTC; generation ~Nov 14–16; round-2 adapter ~Nov 17; its EVAL run ~Nov 19.
+- **Gate 1 automation** (tmux `l4check`, `vm/l4_speed_check.sh`): when `gate1` ends, `vm/verdict.py` applies the three parts of the rule:
+  - ≥ +3 on the 77 `test_score` ≤ 1 tasks (`results/lists/eval_ts01.txt`);
+  - not negative on all 109;
+  - practice swing set ≥ −1;
+  - calls and output tokens ≤ ×1.08. Time is excluded: the adapter arm runs on the stretched clock.
+  - Only if all three pass: the adapter is uploaded as a private dataset (`aagneye/gemma4-31b-lora1-adapter`), and the speed notebook (`vm/make_kaggle_speed.py`, private `aagneye/gemma4-31b-lora-speed`; base vs adapter tokens/s at 1 and 4 requests plus a long prompt; no agent runs) is pushed on 4×L4 and read back.
+  - Result in `results/replica/lora1_eval_gate.txt` and `logs/l4_speed_check.log`.
+- `vm/verdict.py` gained `--tasks` (judge a subset) and `--cost-keys`. Checked on last week's v7 data: REJECT on EVAL (−7 on the 77) and on the swing set (+1).
