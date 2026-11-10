@@ -246,3 +246,29 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   4. 31B LoRA r32 on the 4 T4s: vLLM stopped; fit probe at 12k with fallback 9k/6k; 1 epoch, LR 1e-4, grad-accum 8, 12-h deadline.
   5. vLLM restarted with LoRA hot-swap.
   - Expected: data ~01:00 UTC Nov 9, training done ~12:00–14:00 UTC Nov 9. Then the gate (adapter vs base on EVAL + practice swing set).
+
+## 2026-11-10 — round 1 trained; adapter decode overhead; Gate 1 running
+- **Kaggle:** Budget-Fit V5 drew 0.18 (Nov 8), 0.15 (Nov 9), 0.17 (Nov 10).
+  - Its seven draws: 0.13, 0.17, 0.17, 0.17, 0.18, 0.15, 0.17 → **mean 0.163**.
+  - Scores arrive 12.5–14 h after submission.
+- **Round 1** (`vm/rft_round.sh`):
+  - The T0.6 second pass re-solved 117 of the 132 solved TRAIN tasks.
+  - Episodes: **145 from 101 tasks**. Dropped: protected-file edits 53, over 24 calls 27, identical consecutive calls 22, other 2.
+  - 329 windows; 322 kept at 12k (7 too long); 2.18M tokens, 515k supervised.
+  - Training on the 4 T4s:
+    - fit probe at 12k OK (peak 11.9–13.7 GB, reserved ≤ 15.4 GB);
+    - 41 steps, 1 epoch, 608.6 min, 16.45 ms/token;
+    - final loss 0.29, 0 skipped steps.
+  - Adapter: `runs/31b_bf5_v2_r32/final`. vLLM back at 05:27 UTC Nov 9.
+- **The GPUs then idled 33 h:** Gate 1 was not chained (scheduling gap). From now on a default job is always queued behind the running one.
+- **Bundle `submissions/budgetfit_v5_lora1`** = Budget-Fit V5 + `adapter: main_lora` (r32, 467 MiB fp16; G0 OK; harness-validated). Hot-loaded into the running server.
+- **Adapter decode overhead on the T4s** (vLLM 0.19.1, punica Triton kernels):
+  - one request: 32.1 → 9.1 tok/s (**3.5× slower**);
+  - 4 concurrent: 87.6 → 32.0 tok/s total (**2.74× slower**).
+  - The overhead on Kaggle's L4s is unknown (no public measurement; scottweeden's adapter eval never ran). It is the main risk for shipping any adapter: Budget-Fit's margin under the 12-h cap is unknown, and v6 at +14 % tokens already exceeded once.
+- **Gate 1** (tmux `gate1`, from 14:19 UTC):
+  - The adapter runs alone at concurrency 4 with the clock stretched to **scale 25** (= 9 × 2.74), so it gets the same Kaggle-equivalent token budget per task.
+  - It is paired against Budget-Fit's existing `bf5_eval` run (scale 9, 2+2 load, pure base batches). A fresh pair would slow the base arm too, since mixed batches run the LoRA kernels.
+  - Order: the 77 `test_score` ≤ 1 tasks first, then the 32 others (`results/lists/rebench_eval_ts.txt`), then the 17 practice swing tasks (`lora1_sw`).
+  - ETA: the 77 by ~20:00 UTC Nov 11; all by ~15:00 UTC Nov 12.
+- **Queued behind it** (tmux `after_g1`): Budget-Fit at T 0.6 on the 207 unsolved TRAIN tasks (`bf5t06_train3`), for new round-2 tasks.
