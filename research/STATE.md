@@ -281,3 +281,16 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - It makes the one existing verification command cover 2–3 related cases plus the existing test file, without new calls.
   - Target: the ~45 narrow-fix failures of `bf5_eval`.
   - Budget-Fit's own text is now tracked in `vm/prompts/budgetfit_v5.md`.
+- 17:50 UTC — user decisions (re-asked after the app restart):
+  - **C1 approved for the VM test.**
+  - **One short Kaggle 4×L4 speed check** (adapter on/off, no agent test) before any adapter takes a slot, only if Gate 1 is won.
+- **Training pool 2:** 551 tasks built (5 clone failures, 55 too big); **248 sound** (gold twice; empty 0) with `scorer-host-venv-plus` (all 32 extras installed).
+- **Gate 1 early read** (10 tasks, 17:10 UTC): adapter and base solved the same 1. The adapter writes fewer output tokens on most tasks (e.g. 5.1k vs 10.3k), but one task looped to the 80-turn limit.
+- **Queue rebuilt** (tmux `round2`, `vm/chain_round2.sh`; the earlier `after_g1` queue was cancelled):
+  1. C1 pair ×2 on `results/lists/c1_eval.txt` (50 EVAL tasks: 36 Budget-Fit-unsolved, 9 solved by Budget-Fit but not v7, 5 stable).
+  2. `vm/verdict.py` (mean gain ≥ +3 per pass; calls/tokens/time ≤ ×1.08) picks the policy.
+  3. T0.6 generation on rebench2 (248) and the 207 unsolved TRAIN tasks.
+  4. Round-2 training (`rft_round.sh` `PER_TASK=2 DEADLINE_MIN=1380`).
+  5. `lora2` packaged, hot-loaded and run on all 109 EVAL at scale 25.
+  - Dropped from the plan: the 58 big-repo tasks (slow snapshots, famous repos).
+  - Expected: C1 verdict ~Nov 13 10:00 UTC; generation ~Nov 14–16; round-2 adapter ~Nov 17; its EVAL run ~Nov 19.
