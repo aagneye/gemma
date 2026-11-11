@@ -351,3 +351,13 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Labels: no real fix 15 (8 of them hit the 8-minute timeout, 5 after fewer than 10 calls); wrong idea 10; too narrow 8; name not in the issue 8; task problem 8; missed a second place 6; near miss 6; wrong place 1.
   - "Would have helped" (upper bounds): C1 8 (2 exam-like), E1 5 (1), T2 3 (3), P1 2 (1), none 44 (20 of the 27 exam-like).
   - Reading: 16 failures need something the issue never states, and no single line is worth more than 2–3 of 27 exam-like tasks. The larger lever is time: timeouts with few calls and 7 no-fix runs at the call cap. That raises the priority of T1 (thinking 2,048, Screen B) and of finding why tasks time out after under 10 calls (hung command vs slow generation; the run log's "hung gap" field).
+- **Run log deployed** (built in its own session, reviewed here): `vm/autopsy.py` writes `autopsy.jsonl`, `brief.md` and `report.md` per run; `vm/arms_report.py` prints the side-by-side table.
+  - It reproduces every target count on `bf5_eval`, `bf5_train` and `v7_eval` (table in `research/raw/13_run_log.md`).
+  - `vm/run_replica.sh` now calls it at the end of every run, and `vm/run_arms.sh` prints the table after a screen.
+  - First reports are in `research/runs/bf5_eval/`.
+- **First table, Budget-Fit vs the adapter on 83 common EVAL tasks:**
+  - solved 36 vs 36 (4 wins, 4 losses);
+  - garbled edit calls 38 vs 3, looped tasks 3 vs 0;
+  - output tokens ×0.96, calls ×1.03;
+  - range-less reads 32% vs 30%; `py_compile` never used by either.
+- **Probe tool** (`vm/probe.py`, `vm/probe_round1.sh`): written and tested offline in its own session. The check against real request dumps waits for Screen A; not deployed yet.
