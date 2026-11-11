@@ -76,6 +76,9 @@ def main():
     ap.add_argument("--extra-packages", help="file of package names counted as installed (the TRAIN-pool venv scorer-host-venv-plus)")
     ap.add_argument("--exclude-repos-file", help="file of repos (owner/name) never selected, e.g. the EVAL repos")
     ap.add_argument("--exclude-ids-file", help="build_log.csv or id list of tasks already built (matched on rebench_id or instance_id)")
+    ap.add_argument("--allow-missing-scores", action="store_true",
+                    help="keep tasks without llm scores or frozen requirements (the monthly SWE-rebench-leaderboard sets); web and "
+                         "compiled projects are then recognised from install_config, and the soundness run decides the rest")
     a = ap.parse_args()
     installed = {norm(d.metadata["Name"]) for d in md.distributions() if d.metadata["Name"]}
     lines = lambda p: [l.strip() for l in open(p) if l.strip() and not l.startswith("#")] if p else []
@@ -98,7 +101,11 @@ def main():
         if not 1 <= len(f2p) <= a.max_f2p: stage["x_f2p"] += 1; continue
         if not meta.get("has_test_patch", True): stage["x_no_test_patch"] += 1; continue
         issue, tests = ls.get("issue_text_score"), ls.get("test_score")
-        if issue is None or tests is None or not (0 <= issue <= a.max_llm_score and 0 <= tests <= a.max_llm_score): stage["x_llm_score"] += 1; continue
+        if a.allow_missing_scores and issue is None and tests is None:
+            inst = json.dumps(r.get("install_config") or {}).lower()
+            if any(re.search(r"\b" + re.escape(w) + r"\b", inst) for w in WEB): stage["x_web"] += 1; continue
+            if re.search(r"meson|cython|maturin|setuptools-rust|cmake|build_ext|\.pyx", inst): stage["x_compiled"] += 1; continue
+        elif issue is None or tests is None or not (0 <= issue <= a.max_llm_score and 0 <= tests <= a.max_llm_score): stage["x_llm_score"] += 1; continue
         allp = patch_files(r["patch"]); files = [p for p in allp if p.endswith(".py") and not is_test_path(p)]
         if any(p.endswith(COMPILED) for p in allp): stage["x_compiled"] += 1; continue
         if not 1 <= len(files) <= a.max_src_files or any(p.endswith(".py") and is_test_path(p) for p in allp):
