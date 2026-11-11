@@ -384,3 +384,10 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
     - Worst decode slowdown 1.214 > 1.125: with ×0.96 output tokens the adapter's generation time would be ×1.09 (4 requests) to ×1.17 (1 request) of Budget-Fit's. Budget-Fit's margin under 12 h is unknown; v6 at +14 % tokens timed out once of two runs.
     - **On L4 the overhead is far smaller than on the T4s (2.7–3.5×).** Gate 1's stretched clock (scale 25 = 9 × 2.74) therefore gave the adapter more tokens per task than Kaggle will: about 1/0.85 of what it gets in 8 minutes on L4.
     - The decision goes back to the user.
+  - **User decision: submit anyway.**
+    - `results/ship_schedule.txt` now holds the line `2026-11-12 aagneye/gemma4-31b-budgetfit-v5-lora1 2 …`. A dry run of `daily_ship.candidates()` for 00:10 UTC Nov 12 picks it first, with Budget-Fit and v5_single as fallbacks.
+    - Stake: one Budget-Fit draw.
+    - Readout ~13:00–14:30 UTC Nov 12:
+      - If it finishes, Budget-Fit's margin under 12 h is above ~10–17 %, so lines that add calls can be considered.
+      - If it times out, the ×1.08 cost rule stays strict.
+    - Expected score: equal to Budget-Fit's or slightly lower. It tied on EVAL, and on L4 it gets ~15 % fewer tokens per task than in Gate 1.
