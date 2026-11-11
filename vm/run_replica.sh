@@ -39,3 +39,5 @@ with open(out + "/results.csv", "w", newline="") as f:
                     r.get("agent_patch_size") or 0, r.get("tool_calls"), r.get("duration_seconds"), (r.get("error") or "")[:160]])
 print("REPLICA_DONE", out, "resolved", sum(1 for r in rows if r.get("resolved")), "/", len(rows))
 PY
+# run log (Nov 11 plan): per task what went wrong and why, plus brief.md and report.md; never fails the run
+[ -f ~/gemma4_vm/autopsy.py ] && python3 ~/gemma4_vm/autopsy.py $OUT --tasks $ROOT/tasks.jsonl --build-log $ROOT/build_log.csv > $OUT/autopsy.out 2>&1 || true
