@@ -347,3 +347,7 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Judge step:** a subagent labels Budget-Fit's 62 EVAL failures from `research/runs/bf5_eval/judge_input.jsonl` → `judge.md`.
 - **Proposed as separate sessions (cards):** the run log (`vm/autopsy.py`, `vm/arms_report.py`) and the probe tool (`vm/probe.py`).
 - **Kaggle:** Budget-Fit V5 draws 0.13, 0.17, 0.17, 0.17, 0.18, 0.15, 0.17 (mean 0.163); Nov 11 pending.
+- **Judge result** (`research/runs/bf5_eval/judge.md`, Budget-Fit's 62 EVAL failures; 27 are exam-like):
+  - Labels: no real fix 15 (8 of them hit the 8-minute timeout, 5 after fewer than 10 calls); wrong idea 10; too narrow 8; name not in the issue 8; task problem 8; missed a second place 6; near miss 6; wrong place 1.
+  - "Would have helped" (upper bounds): C1 8 (2 exam-like), E1 5 (1), T2 3 (3), P1 2 (1), none 44 (20 of the 27 exam-like).
+  - Reading: 16 failures need something the issue never states, and no single line is worth more than 2–3 of 27 exam-like tasks. The larger lever is time: timeouts with few calls and 7 no-fix runs at the call cap. That raises the priority of T1 (thinking 2,048, Screen B) and of finding why tasks time out after under 10 calls (hung command vs slow generation; the run log's "hung gap" field).
