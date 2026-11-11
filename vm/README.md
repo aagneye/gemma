@@ -65,8 +65,10 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 ## Kaggle submission flow (used 2026-10-18 for the baseline; repeat for adapter runs)
 1. `python make_submission.py --out submissions/<name> [--adapter runs/.../ckpt_N]` then `--validate submissions/<name>` in harness-venv.
 2. `python make_notebook.py submissions/<name> submissions/nb_<name> aagneye/<slug> "<Title>"` writes a notebook that embeds the bundle files, rewrites them and zips `/kaggle/working/submission.zip`,
-   plus `kernel-metadata.json` (private, no GPU, no internet, competition attached only). NOTE: an adapter bundle is ~250 MiB and cannot be embedded as text; for adapter runs attach the adapter as a private Kaggle
-   dataset (`kaggle datasets create`) and copy it into `adapters/main_lora/` inside the notebook (metadata `dataset_sources`).
+   plus `kernel-metadata.json` (private, no GPU, no internet, competition attached only). Adapter bundles (implemented 2026-11-11): the weights cannot be embedded as text, so upload
+   `adapters/main_lora/*` once as a private dataset (`kaggle datasets create`; `vm/l4_speed_check.sh` does it) and pass `--adapter-dataset owner/slug`: the notebook copies the files into
+   `adapters/main_lora/`, checks their sha256 against the validated bundle, and assembles the bundle in /tmp so the output holds only `submission.zip`. The slug must equal the slugified title.
+   Before an adapter bundle takes a slot, `vm/l4_speed_check.sh` measures its decode slowdown on 4×L4 (the T4 overhead, 2.7–3.5×, does not transfer).
 3. `kaggle kernels push -p submissions/nb_<name>` (runs in ~30 s on CPU), check `kaggle kernels output` equals the validated bundle.
 4. `kaggle competitions submit gemma-4-developer-agent -k aagneye/<slug> -f submission.zip -v <version> -m "<msg>"`; status via `kaggle competitions submissions gemma-4-developer-agent`.
 - Scoring happens afterwards on Kaggle's 4xL4 machine (hours); the notebook's own accelerator is irrelevant (a public CPU-only notebook scored 0.08). One submission per day; the slot is consumed at submit time.

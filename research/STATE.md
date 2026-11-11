@@ -361,3 +361,16 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - output tokens ×0.96, calls ×1.03;
   - range-less reads 32% vs 30%; `py_compile` never used by either.
 - **Probe tool** (`vm/probe.py`, `vm/probe_round1.sh`): written and tested offline in its own session. The check against real request dumps waits for Screen A; not deployed yet.
+- **~10:00 UTC — user decision: the adapter goes to Kaggle after a runtime test, whatever Gate 1 says** ("push the submission to the kaggle after testing let the submission run on kaggle").
+  - Bundle `submissions/budgetfit_v5_lora1`: Budget-Fit V5 + `adapter: main_lora` (the only text difference) + the round-1 adapter (sha256 `6184a62e…`).
+  - **Runtime test** (`vm/l4_speed_check.sh` with `FORCE=1`, tmux `l4speed`; the gate-bound tmux `l4check` was stopped):
+    - The adapter is uploaded once as the private dataset `aagneye/gemma4-31b-lora1-adapter`.
+    - The speed notebook (`aagneye/gemma4-31b-lora-speed`, 4×L4, no agent runs) starts two servers as the scorer would: the bundle without its adapter (LoRA off, as Budget-Fit is served) and with it (LoRA on).
+    - Every request forces the same output length and has a unique prefix, so the prefix cache cannot serve it.
+    - Rule, fixed before the result: the worst decode slowdown at 1 and 4 requests must be ≤ 1.125. With the adapter's ×0.96 output tokens, its generation time then stays ≤ ×1.08 of Budget-Fit's, the cost rule every bundle meets.
+    - On GO the script schedules the adapter for the next daily slot. On HOLD nothing ships, and the user decides.
+  - **Submission notebook** `aagneye/gemma4-31b-budgetfit-v5-lora1`: `vm/make_notebook.py --adapter-dataset` copies the adapter from the dataset and checks its sha256 against the validated bundle before zipping.
+    - Version 1 stopped on its own check: the competition data holds sample adapters (`sample_submission/adapters/{main,tool}_lora`), so a plain search for `adapter_model.safetensors` finds three files. The first speed notebook had the same search and would have measured the sample adapter; it was deleted while still queued.
+    - Both notebooks now pick the adapter by dataset name.
+    - **Version 2 is checked:** its `submission.zip` (444 MB) unzips byte-identical to the validated bundle. The harness validates it: `main_lora` r32, 467.2 MiB.
+  - The ship line (`results/lists/adapter_ship_line.txt`, kernel version 2) is scheduled only on a GO.
