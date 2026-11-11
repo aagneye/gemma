@@ -374,3 +374,13 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
     - Both notebooks now pick the adapter by dataset name.
     - **Version 2 is checked:** its `submission.zip` (444 MB) unzips byte-identical to the validated bundle. The harness validates it: `main_lora` r32, 467.2 MiB.
   - The ship line (`results/lists/adapter_ship_line.txt`, kernel version 2) is scheduled only on a GO.
+  - **L4 result (10:30 UTC; notebook ran 20 min; two rounds agree to 1%): RUNTIME HOLD.** Nothing was scheduled.
+    | 4×L4, TP 4 | Base (LoRA off) | Adapter | Slowdown |
+    |---|---|---|---|
+    | Decode, 1 request | 39.8 tok/s | 32.8 tok/s | ×1.21 |
+    | Decode, 4 requests | 140.7 tok/s | 123.9 tok/s | ×1.14 |
+    | 6k-token prompt + 64 tokens | 5.75 s | 6.18 s | ×1.075 |
+    - The LoRA server barely slows the base model (×1.00–1.02), so the cost is the adapter itself.
+    - Worst decode slowdown 1.214 > 1.125: with ×0.96 output tokens the adapter's generation time would be ×1.09 (4 requests) to ×1.17 (1 request) of Budget-Fit's. Budget-Fit's margin under 12 h is unknown; v6 at +14 % tokens timed out once of two runs.
+    - **On L4 the overhead is far smaller than on the T4s (2.7–3.5×).** Gate 1's stretched clock (scale 25 = 9 × 2.74) therefore gave the adapter more tokens per task than Kaggle will: about 1/0.85 of what it gets in 8 minutes on L4.
+    - The decision goes back to the user.
