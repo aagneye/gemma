@@ -50,6 +50,16 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
   holds the slots until a bundle beats it on the EVAL set (unfamiliar repos) without more output tokens or time per task.
 - Prompt and setting changes are judged on the EVAL informative subset, never on one pass over the 50 practice tasks.
 
+## Instruction program (user, 2026-11-11; overrides factory-loop steps 2 and 5 where they differ)
+- Instructions change **one line at a time** on top of Budget-Fit V5 (whole-prompt rewrites v6/v7 lost on unfamiliar repos).
+- Three feedback speeds: **probe** (replay one recorded step under a changed prompt, `vm/probe.py`), **screen** (4 arms x 48 dev
+  tasks, `vm/run_arms.sh`, queue `vm/chain_instr.sh`), **confirm** (stack vs Budget-Fit on the 77 EVAL tasks whose tests fit
+  the issue, twice; ship at >= +3 solved per run with calls and tokens <= x1.08, `vm/verdict.py`).
+- Dev tasks come from the training pool (`results/lists/dev48.txt`); EVAL tasks are used only for confirmation.
+- Every run leaves the run log (`vm/autopsy.py`: per task what went wrong and why) and the request log (`REQ_DUMP`).
+- 31B adapter training is paused (round 1 tied Budget-Fit and serves 2.7x slower on T4); E4B work is parked.
+- A finished GPU job is always followed by a queued one (`vm/after_session.sh`); the GPUs never wait for tooling or reviews.
+
 ## Hard facts (verified; details in research/ and memory)
 - Allowed models: gemma-4-{31b,12b,e4b,e2b}-it-qat-w4a16-ct. Scorer: vLLM 0.19.1 TP=4 on 4xL4, 32k context, 12 h for ~120 tasks.
 - Bundles are declarative YAML only (no Python callbacks; CallbackRegistry is empty). Levers: prompts, tool subsets,

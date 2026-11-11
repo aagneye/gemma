@@ -302,3 +302,48 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Only if all three pass: the adapter is uploaded as a private dataset (`aagneye/gemma4-31b-lora1-adapter`), and the speed notebook (`vm/make_kaggle_speed.py`, private `aagneye/gemma4-31b-lora-speed`; base vs adapter tokens/s at 1 and 4 requests plus a long prompt; no agent runs) is pushed on 4×L4 and read back.
   - Result in `results/replica/lora1_eval_gate.txt` and `logs/l4_speed_check.log`.
 - `vm/verdict.py` gained `--tasks` (judge a subset) and `--cost-keys`. Checked on last week's v7 data: REJECT on EVAL (−7 on the 77) and on the swing set (+1).
+
+## 2026-11-11 — instruction program (SWE-agent's method on SWE-rebench data); round-2 training paused
+- **User approved a new plan** (`C:\Users\aagne\.claude\plans\sleepy-hatching-squid.md`):
+  - Build the instruction set one line at a time on Budget-Fit V5 (v6/v7 changed everything at once and lost on EVAL).
+  - Three feedback speeds: probe, screen, confirm.
+  - Dev tasks come from the training pool; EVAL is used only for confirmation.
+  - 31B round-2 training is paused. E4B work is parked.
+- **Measured in Budget-Fit's runs** (`bf5_eval` 109 tasks, `bf5_train` 339 tasks):
+  - **Garbled `edit_file` calls** (ADK error "mandatory input parameters are not present: old_string"):
+    - EVAL: 38 of 293 edit calls (13%), on 5 tasks. TRAIN: 348 of 1,090 (32%), on 36 tasks, at most 61 in one task.
+    - The next call is another failed edit 280 of 348 times (a loop).
+    - v7: 80 of 286. T0.6 pass: 200 of 460. Adapter (`lora1_eval`): 3 of 267.
+    - Cause: vLLM's `gemma4_utils._parse_tool_arguments` falls back to a `key:"value"` regex that cuts a value at an inner double quote.
+    - Solves at T0.2: 13/36 with a garbled call vs 119/303 clean. At T0.6: 13/19 vs 104/113.
+  - **Range-less reads:** 243 of 710 `read_file` calls (EVAL) and 867 of 2,260 (TRAIN); most are truncated at 150 lines. Tasks with ≥ 3 solve 11/39 vs 8/14 with none (EVAL), 44/128 vs 24/50 (TRAIN).
+  - **No syntax check:** `py_compile` is never used. A Syntax/IndentationError was seen on 58 tasks, 14 of them solved.
+  - **Search flooding is rare:** 12 of 470 searches over 4,000 characters. Shell-write edits are not harmful (9/16 solved).
+  - **Grading outcome of unsolved tasks:** target tests not fixed only 51 (EVAL) + 163 (TRAIN); plus passing tests broken 6 + 20; only passing tests broken 0 + 1.
+  - **Reason, 250 unsolved with a test log:** behaviour assertion 114; missing name / parameter / import 61 (44 with the name only in the gold patch, 16 with it in the issue); expected exception not raised 10; other 65.
+  - **"Edit by call 12" does not separate outcomes:** tasks with a later first edit solve 8/17 (EVAL), 26/62 (TRAIN).
+  - **Issue length:** competition public tasks median 418 characters, ours 602. Solve rate 35% under 300 characters vs 42–44% for 300–2,500.
+  - **Exam-like tasks** (test_score ≤ 1, difficulty ≥ 1): 70/177 solved.
+- **Gate 1 so far** (adapter vs Budget-Fit): 36 vs 36 on 83 common tasks; +0 on 55 of the 77 primary tasks (31 vs 31; 4 wins, 4 losses); tokens ×0.96, calls ×1.06.
+  - `vm/gate_watch.sh` (tmux `gatewatch`) ends tmux `gate1` after `lora1_eval` if the main rule fails (the 17-task practice re-check is then skipped). `l4check` still applies the full verdict.
+- **Queue swapped:** tmux `round2` (C1 pair on EVAL, round-2 data, training, second adapter test) cancelled. tmux `instr` runs `vm/chain_instr.sh` behind `gate1`:
+  - **Screen A:** `sA_base` (Budget-Fit), `sA_c1`, `sA_e1r1`, `sA_d1` on `results/lists/dev48.txt` (4 arms × concurrency 1, scale 9, no internet, request log in `results/requests/screenA/`).
+  - then `~/gemma4_vm/probe_round1.sh` if deployed;
+  - then **Screen B:** `sB_base`, `sB_p1`, `sB_t2`, `sB_t1`;
+  - then a filler second pass of Screen A.
+- **Dev set** (`vm/dev_select.py`, seed 0): 48 TRAIN-pool tasks from 44 repos — 12 with garbled-edit loops, 12 partial-file failures, 12 narrow fixes, 12 solved at both T0.2 and T0.6. 46 are exam-like; none is an EVAL task.
+- **Candidate bundles** (Budget-Fit V5 + one change; all validated and compiled):
+  - `budgetfit_c1` (behaviour check);
+  - `budgetfit_e1r1` (small edits, no resend of a garbled call, compile check; reads with a line range);
+  - `budgetfit_d1` (5-line example session);
+  - `budgetfit_p1` (sibling sweep);
+  - `budgetfit_t2` (read the existing tests first);
+  - `budgetfit_t1` (thinking 2,048).
+- **Request log:** `REQ_DUMP=<dir> bash netns_run.sh ...` saves every request sent to the model (`c<pid>_<n>.http`, raw HTTP requests). Tested: the model answers, the internet is blocked, the dump is written.
+- **Fresh test slice** (SWE-rebench-leaderboard monthly sets 2025_10 … 2026_03):
+  - 361 tasks from 196 repos, created Oct 2025–May 2026, mostly Python 3.12/3.13. They carry no llm scores and no frozen requirements.
+  - `rebench_select.py --allow-missing-scores` (web and compiled projects recognised from `install_config`) → 147 candidates from 101 repos.
+  - Snapshot build + no-internet soundness running (tmux `fresh` → `data/rebench_fresh`, `results/rebench_fresh_soundness.csv`). The build started from a first list of 151 that still held 5 web repos; they are dropped when the list is made.
+- **Judge step:** a subagent labels Budget-Fit's 62 EVAL failures from `research/runs/bf5_eval/judge_input.jsonl` → `judge.md`.
+- **Proposed as separate sessions (cards):** the run log (`vm/autopsy.py`, `vm/arms_report.py`) and the probe tool (`vm/probe.py`).
+- **Kaggle:** Budget-Fit V5 draws 0.13, 0.17, 0.17, 0.17, 0.18, 0.15, 0.17 (mean 0.163); Nov 11 pending.
