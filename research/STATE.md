@@ -416,3 +416,44 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Finished at 04:48 UTC: 16, 17, 14 and 20 of 48. That is about 1.1–1.6 tasks per hour per arm, too few tasks to compare yet.
   - Expected end: Nov 13 morning to midday UTC. That is later than the plan's 1.1 days and moves Screen B and the confirmation back by about half a day.
 - No training runs: round-2 training stays paused, and all 4 GPUs serve Screen A.
+
+## 2026-11-12 08:45 UTC — Screen A half done; the replica cuts long model replies at 10 minutes
+- **Screen A** (16.8 h in): 23, 24, 26 and 20 of 48 dev tasks finished (Budget-Fit, C1, E1+R1, D1).
+  - At ~1.3 tasks per hour per arm it ends Nov 13 around 06:00–08:00 UTC. Probe round 1 (at most 170 min) and Screen B follow by themselves.
+- **First read on the 20 tasks every arm finished** (`arms_report.py`). Too few tasks for solves; the pass rules apply at 48.
+
+  | | Budget-Fit | C1 | E1+R1 | D1 |
+  |---|---|---|---|---|
+  | Solved (wins / losses vs Budget-Fit) | 5 | 5 (1 / 1) | 6 (1 / 0) | 7 (2 / 0) |
+  | Target behaviour | | check with 3+ cases: 35 % → 60 % | garbled edits 8 % → 0 %; range-less reads 32 % → 16 % | garbled edits 40 % (29 of its 31 in one loop, `parse_165`) |
+  | Output tokens per task | 5,748 | ×1.17 | ×0.83 | ×1.11 |
+  | Calls per task | 19.6 | ×1.05 | ×0.93 | ×1.12 |
+  | Time per task | 2,585 s | ×0.98 | ×0.84 | ×1.11 |
+
+  - No arm ran `py_compile` even once. E1's compile clause and step 4 of D1's example have no uptake. No syntax error was seen on these 20 tasks either.
+- **Replica fault: the 10-minute request cutoff.**
+  - litellm gives every model request 600 s and then re-sends it. The harness passes no timeout, only `num_retries=5`; the default is in `litellm/main.py` (`timeout = timeout or kwargs.get("request_timeout", 600) or 600`).
+  - `patch_replica_clock.py` scales the task clock by `REPLICA_TIME_SCALE`, but not this cutoff.
+  - Our server decodes ~17 tok/s for 4 running requests (~4.3 tok/s each, vLLM log). Any reply longer than ~2,600 tokens is cut, re-sent, and usually cut again.
+  - Example from the request log: on `striprtf_54` the Budget-Fit arm sent the same 10-message request every 10 minutes, 7 times from 18:19 to 19:19 UTC, until the 72-minute limit.
+  - On Kaggle the same reply takes 1–2 minutes. To reach 600 s there, a reply would need ~23,000 tokens, far above the 8,192-token cap, so the cutoff never fires on Kaggle.
+  - Size, estimated from the traces (a model step over 600 s, or a silent tail of k × 600 s before a session timeout). For Screen A this matches the request log within a few counts:
+
+    | Run | Tasks hit | Cutoffs | Session timeouts with a cutoff | Solved among hit tasks |
+    |---|---|---|---|---|
+    | `sA_base` | 8 of 23 | 31 | 6 of 6 | 0 |
+    | `sA_c1` | 8 of 24 | 17 | 4 of 4 | 0 |
+    | `sA_e1r1` | 7 of 26 | 30 | 5 of 5 | 1 |
+    | `sA_d1` | 10 of 20 | 32 | 6 of 6 | 1 |
+    | `bf5_eval` (Budget-Fit, EVAL) | 19 of 109 | 62 | 9 of 9 | 4 |
+    | `lora1_eval` (adapter, Gate 1) | 38 of 109 | 192 | 6 of 6 | 10 |
+
+  - Effects:
+    - Every session timeout of Screen A had a cutoff, and hit tasks are almost never solved (2 of 33). The solve counts carry this noise.
+    - Anything that shortens replies gains on the replica only. Screen B's T1 (thinking 2,048) would profit most.
+    - Gate 1: the adapter was cut three times as often. At scale 25 each cutoff cost it 24 Kaggle-seconds, against 67 for Budget-Fit at scale 9, so the time lost is similar (~77 vs ~69 Kaggle-minutes over 109 tasks). The verdict is not clearly biased either way.
+  - Proposed fix, waiting for the user's go-ahead: give each request 600 s × `REPLICA_TIME_SCALE` in the replica. It would be applied after Screen A ends and before Screen B starts, so Screen A stays consistent within itself.
+- **Schedule:** a dev task takes ~43 minutes per arm (the plan assumed ~32).
+  - Screen B ends around Nov 15. The confirmation (77 EVAL tasks, two runs side by side) takes ~2.3 days.
+  - The first ship moves from Nov 16 to about Nov 18.
+- **Kaggle:** the adapter (58254696) is still scoring; the result is due ~13:00–14:30 UTC. Budget-Fit takes the slot again tonight.
