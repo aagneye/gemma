@@ -156,3 +156,10 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Request log: `REQ_DUMP=<dir>` on `netns_run.sh` saves every model request; the screens write `results/requests/<screen>/`.
 - Run log: `autopsy.py` (per task what went wrong and why) and `arms_report.py` (side-by-side table); details in `research/raw/13_run_log.md`.
 - Probe tool: `probe.py` (replay one recorded step under a changed prompt; `points`, `verify`, `replay`, `score`, `calibrate`) and `probe_round1.sh`; details in `research/raw/14_probe_tool.md`. While a test run is alive (tmux `gate1` / `instr` / `rep_*`, or any `run_arms.sh` / `run_replica.sh` / `run_pair.sh` process) it sends at concurrency 1 and at most 30 requests per hour.
+
+## 2026-11-12: replica pitfall, the 10-minute request cutoff (fixed)
+- litellm gives every model request 600 s, and the harness re-sends a request that runs out (`num_retries=5`). On Kaggle that limit is never reached, because a task has 8 minutes in all.
+- The replica stretches the task clock (`REPLICA_TIME_SCALE`, `patch_replica_clock.py`) but did not stretch this limit. On the T4s (~4 tok/s per request beside 3 others), every reply over ~2,600 tokens was cut and re-sent until the task's time ran out. It hit 7–10 of ~23 tasks per arm in Screen A, and every one of Screen A's 21 time-outs.
+- Fix (from Screen B on): `local_score.py` sets the limit to 600 s × `REPLICA_TIME_SCALE` (5,400 s at scale 9, longer than the 72-minute task). Each run's `run.log` starts with `replica: model request timeout 5400 s`. At scale 1 nothing changes.
+- Check for it in a request log: the same request saved again 10 minutes later (`research/STATE.md`, Nov 12, has the counting script's method).
+- `probe.py replay` now waits up to 3,600 s per request (it was 900 s, which dropped the long-thinking replies).

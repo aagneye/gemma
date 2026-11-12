@@ -452,8 +452,21 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
     - Every session timeout of Screen A had a cutoff, and hit tasks are almost never solved (2 of 33). The solve counts carry this noise.
     - Anything that shortens replies gains on the replica only. Screen B's T1 (thinking 2,048) would profit most.
     - Gate 1: the adapter was cut three times as often. At scale 25 each cutoff cost it 24 Kaggle-seconds, against 67 for Budget-Fit at scale 9, so the time lost is similar (~77 vs ~69 Kaggle-minutes over 109 tasks). The verdict is not clearly biased either way.
-  - Proposed fix, waiting for the user's go-ahead: give each request 600 s × `REPLICA_TIME_SCALE` in the replica. It would be applied after Screen A ends and before Screen B starts, so Screen A stays consistent within itself.
+  - Proposed fix: give each request 600 s × `REPLICA_TIME_SCALE` in the replica, from Screen B on, so that Screen A stays consistent within itself. Approved and deployed at 09:40 UTC (next section).
 - **Schedule:** a dev task takes ~43 minutes per arm (the plan assumed ~32).
   - Screen B ends around Nov 15. The confirmation (77 EVAL tasks, two runs side by side) takes ~2.3 days.
   - The first ship moves from Nov 16 to about Nov 18.
 - **Kaggle:** the adapter (58254696) is still scoring; the result is due ~13:00–14:30 UTC. Budget-Fit takes the slot again tonight.
+
+## 2026-11-12 09:40 UTC — request-cutoff fix deployed (user go-ahead)
+- **`local_score.py`:** with `REPLICA_TIME_SCALE=k` the per-request model timeout is now 600 s × k (5,400 s at scale 9, longer than the 72-minute task, as Kaggle's 600 s is longer than its 8 minutes). At scale 1 nothing changes.
+  - It wraps `LiteLLMClient.acompletion` in ADK, because ADK imports litellm lazily and would overwrite a patched `litellm.acompletion`. No file in the venv is changed.
+  - Tested against a fake server that answers after 10 s, with LiteLlm built as `swegemma/cli.py` builds it:
+    - scale 1: no patch; reply after 11.8 s, one request;
+    - scale 0.05 (limit 30 s): reply after 11.8 s, one request;
+    - scale 0.01 (limit 6 s): cut every ~6 s, 11 sends, then `litellm.Timeout` after 81 s. This is the Screen A pattern at a smaller scale.
+  - The full script started at scale 9 (no tasks): it printed `replica: model request timeout 5400 s` and exited 0.
+- **`probe.py replay`:** the default per-request timeout goes from 900 s to 3,600 s. A reply may run to 8,192 tokens, about 35 minutes beside a screen; 900 s dropped exactly the long-thinking replies. Probe round 1 picks this up when it starts after Screen A.
+- **Deployment:** both files are on the VM (`~/gemma4_vm/`, `.new` + `mv`; md5 equal to the repo). The 4 running Screen A processes keep the old code in memory, so Screen A finishes under the old rule throughout. Screen B, Screen A2 and the confirmation start new processes and run under the new one.
+- **To check when Screen B starts:** each `results/replica/sB_*/run.log` shows the timeout line, and Screen B's request log has no request saved twice 10 minutes apart.
+- Screen A at 09:39 UTC: 25, 25, 28 and 21 of 48.
