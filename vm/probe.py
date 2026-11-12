@@ -799,7 +799,9 @@ def main():
     p.add_argument("--points", required=True); p.add_argument("--base", required=True, help="prompt file the points were recorded under")
     p.add_argument("--variant", action="append", required=True, help="name=prompt_file (repeatable); name=<base file> replays unchanged")
     p.add_argument("--out", required=True); p.add_argument("--url", default="http://127.0.0.1:8000/v1/chat/completions")
-    p.add_argument("--concurrency", type=int, default=1); p.add_argument("--limit", type=int, default=0); p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--concurrency", type=int, default=1); p.add_argument("--limit", type=int, default=0)
+    p.add_argument("--timeout", type=int, default=3600, help="seconds per request. A reply may run to 8,192 tokens, about 35 min "
+                   "at 4 tok/s beside a screen; a shorter limit drops exactly the long-thinking replies (Nov 12)")
     p.add_argument("--deadline-min", type=float, default=0); p.add_argument("--deadline-epoch", type=float, default=0)
     p.add_argument("--allow-sessions", default="", help="comma-separated tmux session names that do not count as test runs")
     p.add_argument("--busy-rate", type=int, default=30); p.add_argument("--wait", action="store_true", help="wait for the hourly cap instead of stopping")
