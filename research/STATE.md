@@ -407,7 +407,11 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Garbled `edit_file`: 33 % recorded vs 32 % replayed (48 points; 38 replies chose `edit_file` again).
   - Range-less `read_file`: 44 % vs 42 % (50 points; 45 chose `read_file`).
   - The rebuilt prompts have the same token count as the recorded ones in 98 of 98 requests. Tolerance is 5 points.
-  - Screen A's request dumps exist (`results/requests/screenA`). The probe tool is not committed or deployed yet.
+  - Check against Screen A's request log (`results/requests/screenA`): of 223 early steps of `sA_base`, 34 rebuilt requests are equal to the dumped ones apart from call ids, and 189 differ only in trailing newlines of earlier thoughts. None differs otherwise.
+  - **Reviewed and deployed at 05:40 UTC** (commit 69888cb, `~/gemma4_vm/probe.py`, `probe_round1.sh`). Two review fixes:
+    - The GPU guard now also counts running `run_arms.sh` / `run_replica.sh` / `run_pair.sh` processes. Before, a round started by hand with the default `ALLOW=instr` would have run at full concurrency beside Screen A, which runs inside `instr`. Tested: with Screen A alive, the chain's view is now "busy".
+    - The round-1 calibration asks for 135 of its 150 points per rate, so a few failed or late requests do not fail it on the count alone.
+  - Probe round 1 now runs on its own as the chain step after Screen A (at most 170 minutes), then Screen B starts. Screen B's bundles are on the VM, each with one change from Budget-Fit V5: P1 (sibling search line), T2 (read the tests first) and T1 (thinking 2,048).
 - **Screen A** (Budget-Fit, C1, D1 and E1+R1 on the 48 dev tasks; scale 9; one task at a time per arm):
   - Finished at 04:48 UTC: 16, 17, 14 and 20 of 48. That is about 1.1–1.6 tasks per hour per arm, too few tasks to compare yet.
   - Expected end: Nov 13 morning to midday UTC. That is later than the plan's 1.1 days and moves Screen B and the confirmation back by about half a day.
