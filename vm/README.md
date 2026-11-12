@@ -150,3 +150,9 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Never `scp` over a script that a running bash process is executing (bash reads scripts incrementally; the tail of a long `run_replica.sh` run would read the new bytes). Copy to `<name>.new` and `mv` it into place.
 - `/mnt` (the ephemeral disk) is root-owned; put temporary data under `/mnt/biohub/kdata/gemma4/tmp` (the root disk has only ~24 GB free).
 - `run_replica.sh` knobs: `ROOT` (task set dir, default `data/comp`), `ORDER_CSV` (soundness table), `TASK_LIST` (file of instance ids, `#` comments), e.g. `TASK_LIST=results/lists/practice_swing17.txt SCALE=9 bash run_pair.sh ...`.
+
+## 2026-11-12: instruction program tools (Nov 11 plan)
+- Job chain `chain_instr.sh` (tmux `instr`): Screen A, then probe round 1 (only if `~/gemma4_vm/probe_round1.sh` exists), then Screen B, then a second pass of Screen A as filler. Never edit the chain while it runs (see the pitfall above); deploy what it calls.
+- Request log: `REQ_DUMP=<dir>` on `netns_run.sh` saves every model request; the screens write `results/requests/<screen>/`.
+- Run log: `autopsy.py` (per task what went wrong and why) and `arms_report.py` (side-by-side table); details in `research/raw/13_run_log.md`.
+- Probe tool: `probe.py` (replay one recorded step under a changed prompt; `points`, `verify`, `replay`, `score`, `calibrate`) and `probe_round1.sh`; details in `research/raw/14_probe_tool.md`. While a test run is alive (tmux `gate1` / `instr` / `rep_*`, or any `run_arms.sh` / `run_replica.sh` / `run_pair.sh` process) it sends at concurrency 1 and at most 30 requests per hour.
