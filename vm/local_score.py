@@ -8,7 +8,8 @@ with Kaggle on task soundness (see vm/README.md). --sandbox docker is the old pe
 
 The model is served separately by vm/serve_vllm.sh; this script routes the submission's declared model and adapters
 to that endpoint. Only the TIME budget is scaled (--time; T4s decode slower than the scorer's L4s); tool-call / turn /
-command budgets come from the submission's eval_config.yaml unchanged.
+command budgets come from the submission's eval_config.yaml unchanged. With REPLICA_TIME_SCALE=k (the clock patch,
+patch_replica_clock.py) the per-request model timeout is scaled by k as well (scale_request_timeout below).
 
   LOCAL_INFERENCE_URL=http://127.0.0.1:8000/v1 python local_score.py --root data/comp --submission submissions/pub022 \
       --results results/local/pub022 --time 24 --concurrency 4 --order-csv results/kaggle_soundness.csv --first 50
@@ -27,6 +28,28 @@ def ordered_sound(path):
         for q in qs:
             if q: out.append(q.pop(0))
     return out
+
+
+def scale_request_timeout():
+    """Replica only; a no-op at REPLICA_TIME_SCALE=1 (Kaggle's own speed).
+
+    litellm gives every model request 600 s, then the harness's num_retries=5 sends it again. On Kaggle that limit is
+    never reached: an 8-minute task cannot wait 600 s for one reply. On the T4s, which decode about 9x slower, a reply
+    over ~2,600 tokens was cut and re-sent until the task's time ran out (research/STATE.md, Nov 12). Scale the limit
+    like the task clock so that it stands for Kaggle's 600 s. Returns the new limit in seconds, or None."""
+    scale = float(os.environ.get("REPLICA_TIME_SCALE", "1") or 1)
+    if scale == 1:
+        return None
+    from google.adk.models import lite_llm      # LiteLlm imports litellm lazily; patch the client method it calls
+    orig, limit = lite_llm.LiteLLMClient.acompletion, 600 * scale
+
+    async def acompletion(self, model, messages, tools, **kw):
+        if kw.get("timeout") is None:
+            kw["timeout"] = limit
+        return await orig(self, model, messages, tools, **kw)
+
+    lite_llm.LiteLLMClient.acompletion = acompletion
+    return limit
 
 
 def main():
@@ -48,6 +71,9 @@ def main():
     from swegemma.cli import _build_cli_model_registry
     from swegemma.config import EvalConfig, build_submission_limits
     from swegemma.evaluate import Evaluator
+    limit = scale_request_timeout()
+    if limit:
+        print(f"replica: model request timeout {limit:.0f} s (600 s x REPLICA_TIME_SCALE)", flush=True)
 
     root, sub = Path(a.root), Path(a.submission)
     ev = yaml.safe_load(open(sub / "eval_config.yaml"))["evaluation"]
