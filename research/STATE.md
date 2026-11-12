@@ -391,3 +391,24 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
       - If it finishes, Budget-Fit's margin under 12 h is above ~10–17 %, so lines that add calls can be considered.
       - If it times out, the ×1.08 cost rule stays strict.
     - Expected score: equal to Budget-Fit's or slightly lower. It tied on EVAL, and on L4 it gets ~15 % fewer tokens per task than in Gate 1.
+
+## 2026-11-12 04:50 UTC — Gate 1 rejects the adapter; Screen A a third done; probe calibration passes
+- **Gate 1 ended Nov 11 15:57 UTC: REJECT** (`logs/gate_watch.log`).
+  - 77 EVAL tasks whose tests fit the issue: Budget-Fit 41, adapter 39 (−2; 4 wins, 6 losses).
+  - Cost: calls ×1.01, tokens ×0.91, time ×1.76 (T4 serving).
+  - All 109 EVAL tasks: adapter 45, Budget-Fit 47.
+  - gatewatch skipped the practice re-check and ended gate1. `chain_instr.sh` started Screen A at 15:58 UTC, so the GPUs did not wait.
+  - The adapter does not take the daily slot. From Nov 13 the shipper sends Budget-Fit again (`ship.txt` line 1; there is no later override).
+- **Kaggle:**
+  - The adapter bundle was submitted at 00:16 UTC (ref 58254696, user decision Nov 11) and is scoring.
+  - Budget-Fit's Nov 11 draw (58218833) scored 0.13, tying its lowest. Its draws are now 0.13, 0.17, 0.17, 0.17, 0.18, 0.15, 0.17, 0.13 (8 draws, mean 0.159).
+- **Probe calibration: PASSED.**
+  - The run replayed 100 points of `bf5_train` under the unchanged prompt; replies finished Nov 11 16:52 UTC (`tmp/probe_test/cal`).
+  - Garbled `edit_file`: 33 % recorded vs 32 % replayed (48 points; 38 replies chose `edit_file` again).
+  - Range-less `read_file`: 44 % vs 42 % (50 points; 45 chose `read_file`).
+  - The rebuilt prompts have the same token count as the recorded ones in 98 of 98 requests. Tolerance is 5 points.
+  - Screen A's request dumps exist (`results/requests/screenA`). The probe tool is not committed or deployed yet.
+- **Screen A** (Budget-Fit, C1, D1 and E1+R1 on the 48 dev tasks; scale 9; one task at a time per arm):
+  - Finished at 04:48 UTC: 16, 17, 14 and 20 of 48. That is about 1.1–1.6 tasks per hour per arm, too few tasks to compare yet.
+  - Expected end: Nov 13 morning to midday UTC. That is later than the plan's 1.1 days and moves Screen B and the confirmation back by about half a day.
+- No training runs: round-2 training stays paused, and all 4 GPUs serve Screen A.
