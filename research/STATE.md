@@ -517,3 +517,16 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - It runs S1 ×2 against Budget-Fit ×2 on the 77 EVAL tasks, then `verdict.py` (+3 per pass; calls, tokens and time ≤ ×1.08), then a dev48 filler (Budget-Fit, S1, T1, E1+R1).
   - At Screen B's pace (7.7 task runs per hour) the 308 runs take ~40 hours, so the verdict comes around Nov 16 00:00 UTC.
 - **GPUs:** the Screen A2 filler (Screen A again, with the fix) is running: 9–10 of 48 per arm.
+
+## 2026-11-14 08:00 UTC — confirmation 1 started: stack S2 (E1+R1, T2, thinking 2,048) vs Budget-Fit on the 77 EVAL tasks
+- **User decision (Nov 14):** the stack takes T2 as well ("Add T2 too"). S2 replaces S1; S1 stays built but is not run.
+- **Bundle `submissions/budgetfit_s2`:**
+  - Prompt `vm/prompts/budgetfit_s2.md` = Budget-Fit V5 + R1 after line 10, T2 after line 11, E1 after line 15, word for word as screened. Byte check: without T2's line it equals `budgetfit_e1r1`; without the R1 and E1 lines it equals `budgetfit_t2`.
+  - `sampling.yaml` from `budgetfit_t1` (thinking 2,048).
+  - Validated and compiled: 9 tools, 5,466 instruction characters.
+- **Run** (tmux `confirm1`, `vm/confirm1.sh`, started 07:56 UTC):
+  - 4 arms side by side (Budget-Fit ×2, S2 ×2) on the 77 EVAL tasks (`results/lists/eval_ts01.txt`); scale 9, concurrency 1 each, no internet, request log `results/requests/confirm1`.
+  - Checked at the start: all 4 `run.log` files show the 5,400-s request timeout. The first requests carry the right prompt and thinking budget (S2 2,048, Budget-Fit 4,096).
+  - Verdict by `verdict.py`: ship when the mean gain is ≥ +3 solved per pass and calls, tokens and time are each ≤ ×1.08. Expected after ~40 hours, around Nov 16 00:00 UTC.
+  - After the verdict, the same session runs the dev48 filler (Budget-Fit, S2, T1, T2).
+- The Screen A2 filler was stopped for it at 9–10 of 48 tasks per arm (`tmux kill-session -t instr`; no process left). Its partial results stay in `results/replica/sA2_*`.
