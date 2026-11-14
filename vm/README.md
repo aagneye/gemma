@@ -163,3 +163,4 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Fix (from Screen B on): `local_score.py` sets the limit to 600 s × `REPLICA_TIME_SCALE` (5,400 s at scale 9, longer than the 72-minute task). Each run's `run.log` starts with `replica: model request timeout 5400 s`. At scale 1 nothing changes.
 - Check for it in a request log: the same request saved again 10 minutes later (`research/STATE.md`, Nov 12, has the counting script's method).
 - `probe.py replay` now waits up to 3,600 s per request (it was 900 s, which dropped the long-thinking replies).
+- Probe speed on the T4s (round 1, Nov 13): ~340 s per request at concurrency 4 on an idle server, because every probe prompt is new (~14k tokens, no prefix-cache hit). Expect ~25 points per hour. `replay` sends points in file order, so a run stopped by its deadline covers only the first kinds; interleave the kinds in the points file.

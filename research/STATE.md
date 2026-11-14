@@ -470,3 +470,50 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Deployment:** both files are on the VM (`~/gemma4_vm/`, `.new` + `mv`; md5 equal to the repo). The 4 running Screen A processes keep the old code in memory, so Screen A finishes under the old rule throughout. Screen B, Screen A2 and the confirmation start new processes and run under the new one.
 - **To check when Screen B starts:** each `results/replica/sB_*/run.log` shows the timeout line, and Screen B's request log has no request saved twice 10 minutes apart.
 - Screen A at 09:39 UTC: 25, 25, 28 and 21 of 48.
+
+## 2026-11-14 07:30 UTC — Screens A and B done; T1 and E1+R1 lead; the adapter exceeded Kaggle's runtime; stack S1 built
+- **Kaggle:**
+  - The adapter (58254696, Nov 12) ended in an error: "Your submission notebook exceeded the allowed runtime." It has no score. The L4 runtime HOLD (decode ×1.14–1.21) was right: with the adapter, Budget-Fit does not fit the 12-hour limit.
+  - Budget-Fit, Nov 13 (58289304): **0.17**. The Nov 14 draw (58325778) is scoring. Budget-Fit's draws: 0.13, 0.17, 0.17, 0.17, 0.18, 0.15, 0.17, 0.13, 0.17 (9 draws, mean 0.160).
+- **Screen A, final** (48 dev tasks, Nov 11 15:58 → Nov 12 21:38 UTC, still under the 10-minute cutoff; `results/screens/screenA.md`):
+
+  | | Budget-Fit | C1 | E1+R1 | D1 |
+  |---|---|---|---|---|
+  | Solved (wins / losses) | 15 | 14 (1 / 2) | 16 (1 / 0) | 15 (2 / 2) |
+  | Target behaviour | | check with 3+ cases: 46 % → 62 % | garbled edits 40 % → 10 % (loops 4 → 1); range-less reads 39 % → 28 % | garbled 31 %, range-less 32 % |
+  | Output tokens / calls / time | 6,129 / 19.5 / 2,057 s | ×1.25 / ×1.10 / ×1.05 | ×0.83 / ×0.92 / ×0.91 | ×1.14 / ×1.08 / ×1.08 |
+
+  - By the pass rules (behaviour moves; solved ≥ Budget-Fit − 2; tokens ≤ +5 %): **E1+R1 passes**; C1 and D1 fail on tokens.
+  - `py_compile` ran in 1 of 48 tasks (E1+R1): that clause has no effect.
+- **Probe round 1** (Nov 12 21:38 → Nov 13 00:28 UTC, `results/probes/round1.md`): **calibration failed; the comparison is not usable.**
+  - Only 54 of the 300 points were answered under the unchanged prompt in 170 minutes. Each request took ~340 s at concurrency 4 on an idle server.
+  - Why so slow: every probe request is a fresh ~14k-token prompt with no prefix-cache hit, so prefill dominates. Agent runs hit the prefix cache 85 % of the time.
+  - The points went out in file order, so the answered ones were all edit points, 48 of 54 with a recorded garbled call, and no read point was answered.
+  - Garbled share: 89 % recorded vs 76 % replayed (−13 points, on 54 points; the rule needs 135 points within 5).
+  - Lesson: on the T4s the probe answers ~25 points per hour. A usable round needs the kinds interleaved and ~12 hours, or a smaller question.
+- **Screen B, final** (48 dev tasks, Nov 13 00:29 → Nov 14 01:20 UTC, with the cutoff fix; `results/screens/screenB.md`):
+
+  | | Budget-Fit | P1 | T2 | T1 |
+  |---|---|---|---|---|
+  | Solved (wins / losses) | 16 | 15 (1 / 2) | 18 (4 / 2) | **20 (4 / 0)** |
+  | Target behaviour | | grep between the first edit and submit: 29 % → 35 %; partial group 0 → 0 | tests read before the first edit: 38 % → 35 %; narrow group 0 → 0 | tokens −5 % (target −15 %) |
+  | Output tokens / calls / time | 7,396 / 19.9 / 1,834 s | ×1.04 / ×1.06 / ×1.02 | ×0.94 / ×0.94 / ×0.95 | ×0.95 / ×1.04 / ×0.96 |
+
+  - The cutoff fix works in live runs: every Screen B `run.log` shows the 5,400-s line, and the request log has 0 requests sent twice (Screen A: 147). Budget-Fit's session timeouts went from 8 to 1.
+  - P1 fails. T2 and T1 gain solves, but neither moved its stated target behaviour.
+- **Noise check** against Budget-Fit's two runs on the same 48 tasks (`sA_base` 15, `sB_base` 16): 12 tasks were solved in both runs and 7 in one run only.
+  - Robust wins (a task Budget-Fit solved in neither run) and robust losses (solved in both): C1 0 / 1, E1+R1 0 / 0, D1 0 / 0, P1 0 / 1, T2 1 / 0, **T1 2 / 0** (`mplotutils_26`, `striprtf_54`). On the 7 coin-flip tasks T1 solved 6.
+  - Most candidates are within noise on solving. T1 is the only solver gain that stands out. E1+R1 is a clear behaviour and cost gain.
+- **Where the tasks are lost** (unsolved tasks by failure type, `autopsy.py`, in every arm):
+  - some gold files not edited: 7–9;
+  - no source edit in the patch: 2–9;
+  - the tests call a name that is not in the issue: 3–5;
+  - wrong behaviour or value: 2–6;
+  - other test errors: 3–4.
+  - The `partial` and `narrow` dev groups (24 tasks) stay at 0–1 solved in every arm. None of the lines aimed at them (C1, P1, T2) moved them.
+- **Stack S1:** `submissions/budgetfit_s1` = the E1+R1 prompt (byte-identical to `budgetfit_e1r1`) + T1's `sampling.yaml` (thinking 2,048). It is validated and compiled (9 tools, 5,252 instruction characters).
+  - T2 is left out: its only robust win (`striprtf_54`) is also one of T1's.
+- **`vm/confirm_s1.sh`** is deployed and **not started**. It waits for the user's go-ahead, since T1 joins the stack although it missed its token target.
+  - It runs S1 ×2 against Budget-Fit ×2 on the 77 EVAL tasks, then `verdict.py` (+3 per pass; calls, tokens and time ≤ ×1.08), then a dev48 filler (Budget-Fit, S1, T1, E1+R1).
+  - At Screen B's pace (7.7 task runs per hour) the 308 runs take ~40 hours, so the verdict comes around Nov 16 00:00 UTC.
+- **GPUs:** the Screen A2 filler (Screen A again, with the fix) is running: 9–10 of 48 per arm.
