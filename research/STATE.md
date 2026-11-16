@@ -530,3 +530,24 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Verdict by `verdict.py`: ship when the mean gain is ≥ +3 solved per pass and calls, tokens and time are each ≤ ×1.08. Expected after ~40 hours, around Nov 16 00:00 UTC.
   - After the verdict, the same session runs the dev48 filler (Budget-Fit, S2, T1, T2).
 - The Screen A2 filler was stopped for it at 9–10 of 48 tasks per arm (`tmux kill-session -t instr`; no process left). Its partial results stay in `results/replica/sA2_*`.
+
+## 2026-11-16 15:00 UTC — confirmation 1 rejects stack S2; the screen gains were noise; a public 0.22 recipe
+- **Confirmation 1** (Nov 14 07:56 → Nov 15 20:01 UTC; `results/replica/confirm1_verdict.txt`, `results/screens/confirm1.md`): **REJECT.**
+  - Pass a: Budget-Fit 41, S2 40 (−1; 9 wins, 10 losses). Calls ×1.10, tokens ×0.94, time ×0.96.
+  - Pass b: Budget-Fit 44, S2 43 (−1; 3 wins, 4 losses). Calls ×1.05, tokens ×0.86, time ×0.90.
+  - Mean −1.0 per pass (the rule needs +3). Cost: calls ×1.08, tokens ×0.90, time ×0.93.
+  - The behaviour moved as intended: garbled-edit loops 8 and 5 → 4 and 2 tasks; range-less reads 37–40 % → 26 %. Solving did not move.
+  - The two Budget-Fit runs themselves differ by 3 solved (41 vs 44).
+- **Dev48 re-run** (the filler `sS_*`, 35 tasks common to all arms at 14:50 UTC): Budget-Fit 14, S2 13, T1 13 (2 wins / 3 losses), T2 11 (2 / 5).
+  - Screen B's T1 +4 and T2 +2 did not repeat: the screen picked noise.
+- **Lesson:** one prompt line moves behaviour, but its effect on solving is smaller than the noise between identical runs (±3 of 77). The instruction program stops here, and Budget-Fit keeps the slot.
+- **Kaggle:** Budget-Fit scored 0.15 (Nov 14) and 0.17 (Nov 15); Nov 16 is scoring. Over 11 draws: mean 0.160, best 0.18.
+- **Leaderboard (Nov 16):** 5,885 teams. Top 0.29; 14 teams at 0.24, 102 at 0.22, 517 at 0.20. We are at 0.18, rank ~1,076, with 634 teams above us.
+- **Public recipe at 0.22** (notebook "LB 0.22 | 3 tweaks, 40 tool calls, no training", Nov 14, built on the same Budget-Fit V5; `research/raw/15_public_lb022_recipe.md`). Its three changes:
+  1. 40 tool calls instead of 28 (time cap still 8 minutes);
+  2. a fast exit: one word after `submit_patch`, and `submit_patch` at once when the call budget is used up;
+  3. the issue text pinned at the end of the system prompt through `{problem_description}` / `{hints?}`. Our harness sets both in the session state (`swegemma/harness/agent_runner.py:677-681`), so the text survives history compaction.
+  - A second public notebook (Nov 16, "LB 0.22, 40 tool calls") uses the same lever.
+- **Proposed next, waiting for the user:** test this recipe against Budget-Fit, 2 passes on the 77 EVAL tasks, with runtime measured.
+  - It breaks the Nov 3 rule ("no more tokens or time per task"): 40 calls make runs longer, and the risk is Kaggle's 12-hour limit.
+- **No training runs.** It has been paused since Nov 11.
