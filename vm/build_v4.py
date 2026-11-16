@@ -189,13 +189,18 @@ def build_spec(out, spec):
 
 
 # ------------------------------------------------------------------------------------------------------------ checks
-def check(out, model):
+def check(out, model, state_keys=()):
+    """state_keys: ADK state templates a prompt may use on purpose, e.g. ("problem_description", "hints"), which the
+    harness fills from the task (swegemma/harness/agent_runner.py); any other curly brace still fails the check."""
+    import re
     import adk_submission
     from adk_submission import ModelRegistry, ToolRegistry, compile_submission, validate_directory
     from swegemma.config import build_submission_limits
+    known = re.compile(r"\{(?:%s)\??\}" % "|".join(map(re.escape, state_keys))) if state_keys else None
     for p in out.rglob("*"):
         if p.is_file() and p.suffix in (".md", ".yaml"):
-            assert "{" not in p.read_text() or p.suffix == ".yaml", f"curly brace in {p} would be read as an ADK state template"
+            text = known.sub("", p.read_text()) if known else p.read_text()
+            assert "{" not in text or p.suffix == ".yaml", f"curly brace in {p} would be read as an ADK state template"
             assert "@CALLS@" not in p.read_text() and "@MINUTES@" not in p.read_text(), f"unrendered budget token in {p}"
     limits, gen = build_submission_limits()
     validate_directory(out, limits=limits)
