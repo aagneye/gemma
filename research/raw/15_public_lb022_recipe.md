@@ -30,4 +30,6 @@ A second notebook with the same lever: victorzhong0110 "Gemma4 Pack LB 0.22 40 T
   the two known keys.
 
 ## Status
-Not tested by us. Proposed: two passes against Budget-Fit on the 77 EVAL tasks, with runtime measured (STATE.md, Nov 16).
+Nov 16: the user approved a test. The bundle is `submissions/pub40` on the VM; it was extracted with
+`vm/bundle_from_notebook.py`, the digest matches, and the prompt is tracked as `vm/prompts/pub40.md`. Confirmation 2
+(`vm/confirm2.sh`, two passes against Budget-Fit on the 77 EVAL tasks, runtime measured) started at 15:13 UTC.

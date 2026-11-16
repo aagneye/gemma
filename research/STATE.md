@@ -551,3 +551,17 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Proposed next, waiting for the user:** test this recipe against Budget-Fit, 2 passes on the 77 EVAL tasks, with runtime measured.
   - It breaks the Nov 3 rule ("no more tokens or time per task"): 40 calls make runs longer, and the risk is Kaggle's 12-hour limit.
 - **No training runs.** It has been paused since Nov 11.
+
+## 2026-11-16 15:15 UTC — confirmation 2 started: the public 40-call recipe against Budget-Fit on the 77 EVAL tasks
+- **User go-ahead (Nov 16)** to test the public recipe. Condition: if the cost rises more than 8 % (the normal ship rule), the numbers go to the user before any Kaggle slot.
+- **Bundle `submissions/pub40`** (prompt tracked as `vm/prompts/pub40.md`):
+  - Extracted from the public notebook without running it (`vm/bundle_from_notebook.py`: `ast.literal_eval` of its `FILES` dict). The notebook's own digest `a6c6460094d8` matches.
+  - Differences from `budgetfit_v5`: `max_tool_calls` 28 → 40; in the prompt, the one-word exit, the budget lines saying 40, the "budget used up → submit" bullet, and the pinned "task statement, verbatim" section with `{problem_description}` / `{hints?}`.
+  - Validated and compiled. `build_v4.check` now takes `state_keys`; it accepts these two ADK state keys, and any other brace still fails.
+- **Run** (tmux `confirm2`, `vm/confirm2.sh`, started 15:13 UTC):
+  - 4 arms side by side (Budget-Fit ×2 `cf2_base_a/b`, pub40 ×2 `cf2_cand_a/b`) on the 77 EVAL tasks; scale 9, no internet, request log `results/requests/confirm2`.
+  - Checked at the start: all `run.log` files show the 5,400-s timeout, and none has a traceback.
+  - The pub40 requests end with the task's own issue text (the template is filled). The Budget-Fit requests have no such section.
+  - `verdict.py` decides: +3 per pass, with calls, tokens and time ≤ ×1.08. Calls will likely rise by design (the cap is 40); any ratio over ×1.08 goes to the user first.
+  - Expected after ~40 hours, around Nov 18 07:00 UTC. The filler then runs Budget-Fit and pub40 twice more on the 48 dev tasks (`sP_*`).
+- The dev48 re-run (`sS_*`) was stopped at 35–37 of 48 tasks per arm for it; its results are kept.
