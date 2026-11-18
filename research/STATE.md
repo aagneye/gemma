@@ -606,3 +606,17 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Where Budget-Fit stops at 28 calls** (13 and 18 tasks): pub40 solves 7 vs 7 and 8 vs 7. 12 of its 15 losses are on tasks where Budget-Fit used fewer than 28 calls.
 - **Runs at the 72-minute cap:** pub40 6 and 7; Budget-Fit 4 and 1.
 - **Next:** the dev48 filler (`sP_*`, tmux `confirm2`) started at 07:56 UTC and cannot change the decision. The Patchsmith V7 question is still open.
+
+## 2026-11-18 09:50 UTC — confirmation 3 started: Patchsmith V7 against Budget-Fit
+- The user approved the test (Nov 18) in place of the dev48 filler. The filler (`sP_*`, 2–3 tasks per arm) was stopped at 09:50 UTC; nothing of ours was left running, and vLLM stayed up. Its partial results are kept.
+- **Bundle** `submissions/patchsmith_v7` (VM): the exact zip of Repair Lab's public 0.22 run.
+  - Source: exp021, embedded in the notebook as `parent_original`, sha256 `e3bd5f42…`. The notebook's root `submission.zip` is a newer, unscored candidate with 40 calls.
+  - Extracted with `vm/bundle_from_nb_zip.py`. Its 6 files equal the notebook's control files byte for byte. LICENSE.txt and NOTICE.txt (Apache-2.0) are kept.
+  - Settings: 6 tools (no graph tools), T 0.2, thinking 4,096, max output 8,192. Budget: 28 calls, 8 minutes, 80 turns, 60-s command limit (the replica applies it unscaled, as Kaggle does).
+  - Prompt: 4,892 characters, no template braces. Validated and compiled (`build_v4.check`).
+- **Run** (tmux `confirm3`, `vm/confirm3.sh`, started 09:50 UTC): same protocol as confirmation 2.
+  - 4 arms on the 77 EVAL tasks: Budget-Fit ×2 (`cf3_base_a/b`) and Patchsmith ×2 (`cf3_cand_a/b`). Scale 9, no internet, request log `results/requests/confirm3`.
+  - Checked at the start: all `run.log` files show the 5,400-s timeout. The Patchsmith requests carry its prompt and 6 tools; the Budget-Fit requests carry 9 tools.
+  - `verdict.py` decides: +3 per pass, with calls, tokens and time ≤ ×1.08.
+  - Expected after 35–40 hours: Nov 19 21:00 to Nov 20 02:00 UTC. The filler then runs both bundles twice more on the 48 dev tasks (`sQ_*`).
+- **Prior:** about 1 in 10 to pass (`research/raw/16_public_notebooks_nov18.md`).

@@ -48,3 +48,7 @@ Read Nov 18, 05:50–06:05 UTC.
 - No public recipe has an edge over Budget-Fit across repeated runs.
 - The strongest recipe not yet tested is Patchsmith V7: a whole new prompt with one 0.22 run, and its variants scored 0.12–0.17.
 - **For the final picks:** the E4B pick has no realistic chance at the small-model prize. A second Budget-Fit run in that slot is worth about +0.9 tasks of expected private score, because the better of two independent runs counts: E[max of 2] − mean = 0.56 × 1.56 tasks.
+
+## Status
+Nov 18: the user approved a test of Patchsmith V7 (2 passes, 77 EVAL tasks). Confirmation 3 started at 09:50 UTC on the exact
+scored files, the zip embedded in Repair Lab as `parent_original` (`research/STATE.md`, Nov 18 09:50 entry).
