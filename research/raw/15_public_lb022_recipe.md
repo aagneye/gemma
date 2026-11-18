@@ -33,3 +33,7 @@ A second notebook with the same lever: victorzhong0110 "Gemma4 Pack LB 0.22 40 T
 Nov 16: the user approved a test. The bundle is `submissions/pub40` on the VM; it was extracted with
 `vm/bundle_from_notebook.py`, the digest matches, and the prompt is tracked as `vm/prompts/pub40.md`. Confirmation 2
 (`vm/confirm2.sh`, two passes against Budget-Fit on the 77 EVAL tasks, runtime measured) started at 15:13 UTC.
+
+Nov 18: **rejected.** −3 and −1 solved against Budget-Fit (mean −2.0 per pass; the rule needs +3), with calls ×1.12,
+tokens ×1.14 and time ×1.11. The extra calls help only on the tasks Budget-Fit ends at 28 calls (+0 and +2 there).
+Details are in `research/STATE.md` (Nov 18 05:45 entry).

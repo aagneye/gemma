@@ -565,3 +565,18 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - `verdict.py` decides: +3 per pass, with calls, tokens and time ≤ ×1.08. Calls will likely rise by design (the cap is 40); any ratio over ×1.08 goes to the user first.
   - Expected after ~40 hours, around Nov 18 07:00 UTC. The filler then runs Budget-Fit and pub40 twice more on the 48 dev tasks (`sP_*`).
 - The dev48 re-run (`sS_*`) was stopped at 35–37 of 48 tasks per arm for it; its results are kept.
+
+## 2026-11-18 05:45 UTC — confirmation 2 rejects the public 40-call recipe
+- **Confirmation 2** (started Nov 16 15:13 UTC; 3 of 4 arms done, `cf2_cand_b` at 74 of 77): **REJECT**, already certain.
+  - Pass a: Budget-Fit 44, pub40 41 (−3; 4 wins, 7 losses). Calls ×1.08, tokens ×1.13, time ×1.09.
+  - Pass b (74 tasks so far): Budget-Fit 41, pub40 40 (−1; 5 wins, 6 losses). Calls ×1.15, tokens ×1.15, time ×1.13.
+  - Mean −2.0 per pass (the rule needs +3). Cost: calls ×1.12, tokens ×1.14, time ×1.11 (limit ×1.08).
+  - The last 3 tasks of pass b cannot change it: 3 wins would make the mean −0.5.
+- **Where it gains and loses:**
+  - The extra calls help a little where Budget-Fit stops at its 28-call cap (13 and 17 tasks): pub40 solves 7 vs 7 and 8 vs 6.
+  - 11 of its 13 losses are on tasks where Budget-Fit used fewer than 28 calls, so the cap plays no part there.
+  - Lost in both passes: `azurefunctionspythonlibrary_172`, `text2num_96`. Won in both: `edk2pytoollibrary_365`, `temporals_7`.
+  - More runs reach the 8-minute cap: 6 and 5 for pub40, 4 and 1 for Budget-Fit. On Kaggle this is the runtime risk.
+- **Decision:** Budget-Fit V5 keeps the daily slot. The public 0.22 reads as a lucky draw (our Budget-Fit draws range 0.13–0.18).
+- **Kaggle:** Budget-Fit 0.17 (Nov 16), 0.13 (Nov 17); Nov 18 (58487138) is scoring. Over 13 draws: mean 0.158, best 0.18.
+- **Next on the GPUs:** when pass b ends, `confirm2.sh` writes `results/replica/confirm2_verdict.txt` and starts the dev48 filler (`sP_*`: Budget-Fit and pub40, twice each).
