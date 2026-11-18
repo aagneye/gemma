@@ -56,7 +56,8 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
   tasks, `vm/run_arms.sh`, queue `vm/chain_instr.sh`), **confirm** (stack vs Budget-Fit on the 77 EVAL tasks whose tests fit
   the issue, twice; ship at >= +3 solved per run with calls and tokens <= x1.08, `vm/verdict.py`).
 - Dev tasks come from the training pool (`results/lists/dev48.txt`); EVAL tasks are used only for confirmation.
-- Every run leaves the run log (`vm/autopsy.py`: per task what went wrong and why) and the request log (`REQ_DUMP`).
+- Every run leaves the run log (`vm/autopsy.py`: per task what went wrong and why), the clock ledger (`vm/clock_ledger.py` ->
+  `clock.md`: where the moves and minutes went, clock-or-move losses) and the request log (`REQ_DUMP`).
 - 31B adapter training is paused (round 1 tied Budget-Fit and serves 2.7x slower on T4); E4B work is parked.
 - A finished GPU job is always followed by a queued one (`vm/after_session.sh`); the GPUs never wait for tooling or reviews.
 
@@ -68,6 +69,9 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
 - Public evaluation = harness `Evaluator` with `sandbox='subprocess'`. Kaggle-sound public tasks: 71/129 (fastapi 29, rich 42).
 - The VM is shared with other projects: never kill their GPU jobs; use free GPUs only.
 - Kaggle GPU quota 30 h/week (L4 bills 2x); one submission per day; the LB is a noisy draw (same bundle: 0.15-0.22).
+- Clock facts (measured Nov 18, `research/raw/17_clock_ledger.md`): a task's time is the tokens Gemma writes (about 2 s per
+  step + 22 ms per token; prompt size is free). The harness shows no clock and warns from 10 calls left. Garbled calls,
+  `get_status` and `submit_patch` are not counted. Clock rules written in the prompt did not change Gemma's play (v7, S2).
 
 ## Where things are
 - `research/STATE.md` ledger · `research/ARCHITECTURE_V4.md` post-mortem + architecture · `research/PLAN_TOP10.md` plan history
