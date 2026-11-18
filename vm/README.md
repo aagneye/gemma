@@ -157,6 +157,14 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Run log: `autopsy.py` (per task what went wrong and why) and `arms_report.py` (side-by-side table); details in `research/raw/13_run_log.md`.
 - Probe tool: `probe.py` (replay one recorded step under a changed prompt; `points`, `verify`, `replay`, `score`, `calibrate`) and `probe_round1.sh`; details in `research/raw/14_probe_tool.md`. While a test run is alive (tmux `gate1` / `instr` / `rep_*`, or any `run_arms.sh` / `run_replica.sh` / `run_pair.sh` process) it sends at concurrency 1 and at most 30 requests per hour.
 
+## 2026-11-18: taking a public bundle
+- Some notebooks keep their scored bundle as a base64 zip inside the notebook while their root `submission.zip` is a newer, unscored candidate. Repair Lab is one: its root zip is exp025, and the embedded `parent_original` is exp021, which scored 0.22. Extract the scored one:
+  `python3 -I bundle_from_nb_zip.py <nb.ipynb> parent_original <sha256> <out_dir> [<compare_dir>]`.
+- Notebooks that hold a `FILES = {...}` dict use `bundle_from_notebook.py` instead.
+- Check any bundle with the scorer venv:
+  `cd ~/gemma4_vm && $R/scorer-host-venv/bin/python -c "import build_v4; from pathlib import Path; build_v4.check(Path('<bundle>'), '<model>')"`.
+- Confirmation chains: `confirm2.sh` (pub40) and `confirm3.sh` (Patchsmith V7). Each runs 4 arms on the 77 EVAL tasks, writes the verdict, then a dev48 filler; stop the filler with `tmux kill-session -t <name>`.
+
 ## 2026-11-12: replica pitfall, the 10-minute request cutoff (fixed)
 - litellm gives every model request 600 s, and the harness re-sends a request that runs out (`num_retries=5`). On Kaggle that limit is never reached, because a task has 8 minutes in all.
 - The replica stretches the task clock (`REPLICA_TIME_SCALE`, `patch_replica_clock.py`) but did not stretch this limit. On the T4s (~4 tok/s per request beside 3 others), every reply over ~2,600 tokens was cut and re-sent until the task's time ran out. It hit 7–10 of ~23 tasks per arm in Screen A, and every one of Screen A's 21 time-outs.
