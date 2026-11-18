@@ -580,3 +580,17 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Decision:** Budget-Fit V5 keeps the daily slot. The public 0.22 reads as a lucky draw (our Budget-Fit draws range 0.13–0.18).
 - **Kaggle:** Budget-Fit 0.17 (Nov 16), 0.13 (Nov 17); Nov 18 (58487138) is scoring. Over 13 draws: mean 0.158, best 0.18.
 - **Next on the GPUs:** when pass b ends, `confirm2.sh` writes `results/replica/confirm2_verdict.txt` and starts the dev48 filler (`sP_*`: Budget-Fit and pub40, twice each).
+
+## 2026-11-18 06:05 UTC — public notebook search: nothing beats Budget-Fit over repeated runs
+- The user asked for one last candidate before the Nov 24 freeze. Read: the notebook list by public score and 10 new notebooks (`research/raw/16_public_notebooks_nov18.md`).
+- **The highest public notebook score is 0.22, and every 0.22 is a single run.**
+  - Re-runs of public files fall back to about 10 of 58 tasks.
+  - Budget-Fit V5's own files have scored 0.22 once.
+- **Strongest untested recipe: Patchsmith V7** (Repair Lab exp021). It scored 0.22 once; its one-change variants scored 0.12, 0.12 and 0.17.
+  - Its two setting changes have nothing to fix in our 308 Budget-Fit runs: 0 command timeouts, 0 graph-tool calls.
+- **Small-model board:** top 0.12; our E4B is at 0.01 (rank 1,048 of 1,143).
+  - The E4B final pick has no realistic chance at the prize.
+  - A second Budget-Fit run in that slot would add about +0.9 tasks of expected private score (the better of two runs counts).
+- **Waiting for the user:**
+  - Test Patchsmith V7 against Budget-Fit (2 passes, 77 EVAL tasks, ~40 h) in place of the dev48 filler, or stop testing.
+  - The final-pick change.
