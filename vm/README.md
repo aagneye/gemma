@@ -165,6 +165,16 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
   `cd ~/gemma4_vm && $R/scorer-host-venv/bin/python -c "import build_v4; from pathlib import Path; build_v4.check(Path('<bundle>'), '<model>')"`.
 - Confirmation chains: `confirm2.sh` (pub40) and `confirm3.sh` (Patchsmith V7). Each runs 4 arms on the 77 EVAL tasks, writes the verdict, then a dev48 filler; stop the filler with `tmux kill-session -t <name>`.
 
+## 2026-11-18: the clock ledger (vm/clock_ledger.py)
+- What it reports: how the games end (solved, wrong fix inside the budget, blank answer, out of time, wrong fix on the last moves), the solve rate by minutes and by moves used, what a written token and each kind of move cost, long thinking steps, and what Gemma does at the budget warning. Findings and definitions: `research/raw/17_clock_ledger.md`.
+- One run: `python3 ~/gemma4_vm/clock_ledger.py results/replica/<tag> --scale 9 [--thinking 4096] [--out <file.md>]`.
+- Passes of one bundle (same tasks): give several run dirs. The report then adds the tasks solved in every pass, in some and in none, and what better clock play could win back at most.
+- `--scale` is the run's `REPLICA_TIME_SCALE` (line 1 of its `run.log`); minutes in the report are Kaggle-equivalent. `--thinking` is the bundle's thinking budget and adds the steps that use it up.
+- Every run writes it by itself: `run_replica.sh` ends with the ledger and leaves `clock.md` beside `report.md` and `brief.md` (`clock.out` holds the tool's output or its error). It needs `autopsy.py` in the same folder.
+- It is CPU only, takes about a second for 308 games, works on a run in progress, and writes nothing but the `--out` file.
+- Pitfall, inline scripts from this PC: `ssh … "python3 -I -" <<EOF` with a script longer than about 8,000 characters fails with "unexpected EOF while looking for matching quote", because the command line is cut. Keep inline scripts shorter, or copy a script file to the VM and run it there.
+- Pitfall, reused tags: `run_replica.sh` starts with `rm -rf results/replica/<tag>`. A chain started again under an old tag deletes that run. `cf3_base_a/b` and `cf3_cand_a/b` exist but are empty (confirmation 3 was stopped before any task finished); use new tags for a new test.
+
 ## 2026-11-12: replica pitfall, the 10-minute request cutoff (fixed)
 - litellm gives every model request 600 s, and the harness re-sends a request that runs out (`num_retries=5`). On Kaggle that limit is never reached, because a task has 8 minutes in all.
 - The replica stretches the task clock (`REPLICA_TIME_SCALE`, `patch_replica_clock.py`) but did not stretch this limit. On the T4s (~4 tok/s per request beside 3 others), every reply over ~2,600 tokens was cut and re-sent until the task's time ran out. It hit 7–10 of ~23 tasks per arm in Screen A, and every one of Screen A's 21 time-outs.
