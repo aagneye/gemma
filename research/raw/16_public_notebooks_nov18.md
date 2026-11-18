@@ -52,3 +52,4 @@ Read Nov 18, 05:50–06:05 UTC.
 ## Status
 Nov 18: the user approved a test of Patchsmith V7 (2 passes, 77 EVAL tasks). Confirmation 3 started at 09:50 UTC on the exact
 scored files, the zip embedded in Repair Lab as `parent_original` (`research/STATE.md`, Nov 18 09:50 entry).
+Nov 18 10:09 UTC: the user stopped it before any task finished. Patchsmith V7 stays untested.

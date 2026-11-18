@@ -620,3 +620,8 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - `verdict.py` decides: +3 per pass, with calls, tokens and time ≤ ×1.08.
   - Expected after 35–40 hours: Nov 19 21:00 to Nov 20 02:00 UTC. The filler then runs both bundles twice more on the 48 dev tasks (`sQ_*`).
 - **Prior:** about 1 in 10 to pass (`research/raw/16_public_notebooks_nov18.md`).
+
+## 2026-11-18 10:09 UTC — confirmation 3 stopped by the user
+- The user stopped the Patchsmith test 19 minutes in, after asking whether it was needed. No task had finished, so there is no verdict. Patchsmith V7 stays untested.
+- Nothing of ours is left running. vLLM (tmux `vllm`) still holds the 4 GPUs, idle; no GPU job is queued.
+- Budget-Fit V5 keeps the daily Kaggle slot (tmux `dailyship`).
