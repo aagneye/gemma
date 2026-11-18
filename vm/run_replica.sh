@@ -41,3 +41,5 @@ print("REPLICA_DONE", out, "resolved", sum(1 for r in rows if r.get("resolved"))
 PY
 # run log (Nov 11 plan): per task what went wrong and why, plus brief.md and report.md; never fails the run
 [ -f ~/gemma4_vm/autopsy.py ] && python3 ~/gemma4_vm/autopsy.py $OUT --tasks $ROOT/tasks.jsonl --build-log $ROOT/build_log.csv > $OUT/autopsy.out 2>&1 || true
+# clock ledger (Nov 18): where the run's moves and minutes went and which losses are clock or move losses -> clock.md; never fails the run
+[ -f ~/gemma4_vm/clock_ledger.py ] && python3 ~/gemma4_vm/clock_ledger.py $OUT --scale $REPLICA_TIME_SCALE --tasks $ROOT/tasks.jsonl --build-log $ROOT/build_log.csv --out $OUT/clock.md > $OUT/clock.out 2>&1 || true
