@@ -630,3 +630,26 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - On the user's word, our vLLM server (tmux `vllm`) was stopped. All 4 GPUs show 0 MiB and are free for the other project.
 - The only cron entry restarts `dailyship` (CPU only); nothing restarts vLLM.
 - Any new test needs vLLM again (`MODEL=gemma-4-31b-it-qat-w4a16-ct bash ~/gemma4_vm/wait_vllm.sh`). TP=4 needs 4 free GPUs, which the other project now holds.
+
+## 2026-11-18 16:10 UTC — clock ledger: Budget-Fit's moves and minutes; no test (user decision)
+- **Asked by the user:** couple our own work with Budget-Fit's economy of time and moves, like a chess clock. Measured first on runs we already had, with no GPU.
+  - Full note: `research/raw/17_clock_ledger.md`. Tool output for the 4 passes: `research/runs/bf5_cf/clock.md`.
+- **New tool** `vm/clock_ledger.py` (CPU only). `vm/run_replica.sh` now ends with it, so every run leaves `clock.md`.
+  - Both are deployed to `~/gemma4_vm/`. Checked on the 4 Budget-Fit passes, a single run, S2, the 40-call recipe, a run in progress and the hook line.
+- **Budget-Fit on the 77 EVAL tasks, 4 passes (308 games):**
+  - Per pass: 43.25 solved; 26.0 wrong fixes inside the budget; 3.25 blank answers; 2.5 out of time; 2.0 wrong fixes on the last moves. Clock-or-move losses are 7.75 of 33.75 (23%).
+  - 34 tasks are solved in every pass, 25 in none, 18 in some. On those 18, 3.5 losses per pass are clock-or-move losses. At their in-budget solve rate (37 of 58) that is worth about +2.2 per pass; the ship bar is +3.
+  - Time is written tokens: about 1.9 s per step plus 22 ms per token; prompt size has no effect. 2% of the steps write 2,000 tokens or more and hold 20–26% of all tokens.
+  - 63 games (20%) use all 28 moves; 10 (3%) run out of time. Games under 3 minutes: 125 of 179 solved. Over 7 minutes: 2 of 16.
+- **Our changes under this view:**
+  - R1 costs a move per read: in S2, searches 3.9 → 5.3 per game and blank answers 3.25 → 6.0 per pass.
+  - T2 was not followed (tests read before the edit in 28% of games against 27%). v7's "edit at the warning" rule was not followed (7% against 10%).
+  - 40 moves: blank answers 3.25 → 0, out of time 2.5 → 7.5, 3 fewer solved.
+  - Thinking 2,048: Gemma reaches the cap 3–4 times as often; tokens ×0.95; timeouts unchanged.
+  - Lesson: Gemma does not follow clock rules written in the prompt, and the two settings give no gain we can measure.
+- **Decision (user, about 15:40 UTC):** record the findings and build the tool; no GPU test.
+  - `submissions/budgetfit_t1` (thinking 2,048) stays untested on the 77 tasks.
+  - Budget-Fit V5 keeps the daily slot. No further prompt or settings test starts unless the user asks.
+- **GPUs:** all 4 at 0 MiB at 15:52 UTC. Nothing of ours runs on them; vLLM stays down.
+- **Kaggle:** Nov 16 (58407358) 0.17; Nov 17 (58449523) 0.13; Nov 18 (58487138) still scoring at 15:53 UTC.
+- **Still open for the user:** the two final picks on Dec 1. Two Budget-Fit draws instead of Budget-Fit plus E4B are worth about +0.9 task in expectation (`research/raw/16_public_notebooks_nov18.md`).
