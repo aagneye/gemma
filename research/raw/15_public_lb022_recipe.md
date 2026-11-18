@@ -34,6 +34,6 @@ Nov 16: the user approved a test. The bundle is `submissions/pub40` on the VM; i
 `vm/bundle_from_notebook.py`, the digest matches, and the prompt is tracked as `vm/prompts/pub40.md`. Confirmation 2
 (`vm/confirm2.sh`, two passes against Budget-Fit on the 77 EVAL tasks, runtime measured) started at 15:13 UTC.
 
-Nov 18: **rejected.** −3 and −1 solved against Budget-Fit (mean −2.0 per pass; the rule needs +3), with calls ×1.12,
-tokens ×1.14 and time ×1.11. The extra calls help only on the tasks Budget-Fit ends at 28 calls (+0 and +2 there).
-Details are in `research/STATE.md` (Nov 18 05:45 entry).
+Nov 18: **rejected.** −3 and −3 solved against Budget-Fit (mean −3.0 per pass; the rule needs +3), with calls ×1.11,
+tokens ×1.21 and time ×1.13. The extra calls help only on the tasks Budget-Fit ends at 28 calls (+0 and +1 there).
+Details are in `research/STATE.md` (Nov 18 05:45 and 07:56 entries).

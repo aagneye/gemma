@@ -594,3 +594,15 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Waiting for the user:**
   - Test Patchsmith V7 against Budget-Fit (2 passes, 77 EVAL tasks, ~40 h) in place of the dev48 filler, or stop testing.
   - The final-pick change.
+
+## 2026-11-18 07:56 UTC — confirmation 2 final: pub40 −3 and −3
+- `results/replica/confirm2_verdict.txt`: **REJECT**. These numbers replace the partial ones in the 05:45 entry.
+  - Pass a: Budget-Fit 44, pub40 41 (−3; 4 wins, 7 losses). Calls ×1.08, tokens ×1.13, time ×1.09.
+  - Pass b: Budget-Fit 44, pub40 41 (−3; 5 wins, 8 losses). Calls ×1.14, tokens ×1.28, time ×1.17.
+  - Mean −3.0 per pass (the rule needs +3). Cost: calls ×1.11, tokens ×1.21, time ×1.13 (limit ×1.08).
+- **The last two tasks of pass b:**
+  - `pipelib_27`: solved by both.
+  - `soupsieve_71`: lost. From minute 29, pub40 resent a garbled `edit_file` call (no `old_string`) until the 72-minute cap. Budget-Fit solved it.
+- **Where Budget-Fit stops at 28 calls** (13 and 18 tasks): pub40 solves 7 vs 7 and 8 vs 7. 12 of its 15 losses are on tasks where Budget-Fit used fewer than 28 calls.
+- **Runs at the 72-minute cap:** pub40 6 and 7; Budget-Fit 4 and 1.
+- **Next:** the dev48 filler (`sP_*`, tmux `confirm2`) started at 07:56 UTC and cannot change the decision. The Patchsmith V7 question is still open.
