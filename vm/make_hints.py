@@ -16,7 +16,8 @@ recognises the task), gold_files, blocks [{path, old, new}], changed_lines, smal
 new_public_names (public functions, classes or parameters the fix adds, the tests use and the issue does not name:
 the model cannot know them, so such a fix is a poor teaching example), ok and why.
 A task is ok when every block occurs exactly once in the snapshot and applying the blocks gives exactly the source
-files of the real fix. Standard library only; nothing of the repository is executed.
+files of the real fix. Blocks that change only comments or blank lines are then left out of the note (cosmetic_blocks
+counts them). Standard library only; nothing of the repository is executed.
 """
 import argparse, collections, csv, json, os, re, sys, tarfile
 
@@ -140,6 +141,13 @@ def blocks_for(path, text, hunks):
     return blocks, sum(e - s + len(new) for s, e, new in ops), "\n".join(full)
 
 
+def cosmetic(block):
+    """A block that changes only comments or blank lines (a licence header, a reflowed comment). The real fix often
+    carries a few; the tests do not need them and the model learns nothing from them, so the note leaves them out."""
+    code = lambda s: [l.rstrip() for l in s.split("\n") if l.strip() and not l.strip().startswith("#")]
+    return code(block["old"]) == code(block["new"])
+
+
 def apply_blocks(text, blocks):
     """The check the relay relies on: every block is found exactly once, in order of application."""
     for b in blocks:
@@ -193,10 +201,13 @@ def build(task, pool):
         b, ch, new_text = blocks_for(p, texts[p], files[p]["hunks"])
         if b is None: rec["why"] = ch; return rec
         if apply_blocks(texts[p], b) != new_text: rec["why"] = "the blocks do not reproduce the fix"; return rec
-        blocks += b; changed += ch
+        keep = [x for x in b if not cosmetic(x)]; rec["cosmetic_blocks"] = rec.get("cosmetic_blocks", 0) + len(b) - len(keep)
+        blocks += keep; changed += ch
         names += [x for x in new_public_names(texts[p], files[p]["hunks"], issue, task.get("test_patch") or "") if x not in names]
+    if not blocks: rec["why"] = "the fix changes only comments or blank lines"; return rec
     rec.update(blocks=blocks, changed_lines=changed, new_public_names=names, ok=True,
-               small=len(src) <= 2 and len(blocks) <= 8 and changed <= 80)
+               gold_files=sorted({b["path"] for b in blocks}),
+               small=len({b["path"] for b in blocks}) <= 2 and len(blocks) <= 8 and changed <= 80)
     return rec
 
 
