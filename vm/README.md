@@ -182,3 +182,19 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
 - Check for it in a request log: the same request saved again 10 minutes later (`research/STATE.md`, Nov 12, has the counting script's method).
 - `probe.py replay` now waits up to 3,600 s per request (it was 900 s, which dropped the long-thinking replies).
 - Probe speed on the T4s (round 1, Nov 13): ~340 s per request at concurrency 4 on an idle server, because every probe prompt is new (~14k tokens, no prefix-cache hit). Expect ~25 points per hour. `replay` sends points in file order, so a run stopped by its deadline covers only the first kinds; interleave the kinds in the points file.
+
+## 2026-11-19: training round 2 tools (plan `research/PLAN_ROUND2.md`, note `research/raw/18_training_round2.md`)
+- **Blocks of the real fix:** `python3 make_hints.py --pool data/rebench --tasks <ids> --out datasets/r2/hints_train.jsonl`; for rebench2 use `--soundness results/rebench2_soundness.csv`.
+- **Relay checks without GPUs:**
+  - `python3 takeover_check.py sim --run results/replica/bf5_train --hints datasets/r2/hints_train.jsonl` shows where the note would come on recorded runs.
+  - `python3 takeover_check.py http --run <run> --hints <hints> --task <iid> [--position B]` runs the relay against a stand-in server.
+- **Note runs:** `TAG=<tag> POOL=rebench|rebench2 LIST=<ids> HINTS=<hints> bash note_runs.sh`. The plain server must be up on :8000; the relay listens on 8100. Two pools side by side: give the second `RELAY_PORT=8101` and share the concurrency.
+  - Report: `python3 note_report.py <tag> --hints <hints> --thoughts 12`.
+- **Cost of a rank before training:** `slice_adapter.py` → `make_submission.py --adapter` → `bash t4_lora_speed.sh` (T4s) and `bash l4_rank_speed.sh` (Kaggle, speed only, about 20 minutes per rank).
+- **Exact rendering:** `.venv/bin/python exact_data.py check-render --dumps results/requests/<log>` (server up) and `check-journal --journal results/takeover/<tag>`.
+- **Pitfalls:**
+  - `MAX_LORA_RANK` must equal the adapter's rank when speed is measured: the server's cost follows its max rank (default 32), whatever the adapter holds.
+  - A note sent as its own user message erases all earlier thinking from the prompt (the chat template renders thinking only after the last user message). The relay puts the note into a tool result.
+  - After the harness shortens the history, the first user message is the summary (a list of text parts), so the relay recognises the task by tool-call ids.
+  - `note_runs.sh` removes the run and journal folders of a reused TAG, like `run_replica.sh`.
+  - The request log holds requests only. The relay's journal (`results/takeover/<tag>/<task>.jsonl`) also holds the replies.

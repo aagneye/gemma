@@ -15,8 +15,8 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
   per-day override in `results/ship_schedule.txt` or line 1 of `results/ship.txt` (line 2 = fallback). **Kaggle refuses a
   new submission while one is still scoring** (~13 h), so never submit manually late in the day.
 - Slot policy (approved 2026-10-25): 31B best bundle every day, one E4B slot per week; LB slots never validate candidates;
-  freeze new bundles Nov 24; final picks Dec 1 = earliest valid draw of the best 31B config + earliest valid E4B draw.
-  Full plan: `research/PLAN_TO_WIN.md`.
+  freeze new bundles Nov 24 (Nov 26 for the round-2 adapter bundle only, user Nov 19); final picks Dec 1 = earliest valid
+  draw of the best 31B config + earliest valid E4B draw. Full plan: `research/PLAN_TO_WIN.md`.
 
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
@@ -58,7 +58,8 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
 - Dev tasks come from the training pool (`results/lists/dev48.txt`); EVAL tasks are used only for confirmation.
 - Every run leaves the run log (`vm/autopsy.py`: per task what went wrong and why), the clock ledger (`vm/clock_ledger.py` ->
   `clock.md`: where the moves and minutes went, clock-or-move losses) and the request log (`REQ_DUMP`).
-- 31B adapter training is paused (round 1 tied Budget-Fit and serves 2.7x slower on T4); E4B work is parked.
+- 31B adapter training: round 2 runs under `research/PLAN_ROUND2.md` (user approval Nov 19; its stop rules and its
+  pass rule are fixed there; round 1 tied Budget-Fit and broke Kaggle's 12-hour limit). E4B work is parked.
 - A finished GPU job is always followed by a queued one (`vm/after_session.sh`); the GPUs never wait for tooling or reviews.
 
 ## Hard facts (verified; details in research/ and memory)
@@ -75,4 +76,5 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
 
 ## Where things are
 - `research/STATE.md` ledger · `research/ARCHITECTURE_V4.md` post-mortem + architecture · `research/PLAN_TOP10.md` plan history
+- `research/PLAN_ROUND2.md` the approved training plan (Nov 19) · `research/raw/18_training_round2.md` its measurements
 - `vm/` all scripts (copied to `~/gemma4_vm/` on the VM) · VM project root `/mnt/biohub/kdata/gemma4`

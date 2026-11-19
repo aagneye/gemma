@@ -653,3 +653,24 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **GPUs:** all 4 at 0 MiB at 15:52 UTC. Nothing of ours runs on them; vLLM stays down.
 - **Kaggle:** Nov 16 (58407358) 0.17; Nov 17 (58449523) 0.13; Nov 18 (58487138) still scoring at 15:53 UTC.
 - **Still open for the user:** the two final picks on Dec 1. Two Budget-Fit draws instead of Budget-Fit plus E4B are worth about +0.9 task in expectation (`research/raw/16_public_notebooks_nov18.md`).
+
+## 2026-11-19 08:45 UTC — training round 2 approved; tools built; speed test and pilot running
+- **User decisions:** Nov 18 "plan one last training round"; Nov 19 the plan is approved (`research/PLAN_ROUND2.md`).
+  - It covers: the 4 GPUs for about 4.5 days; the private note text; one Kaggle 4×L4 speed check; the freeze moves from Nov 24 to Nov 26 for this one bundle; the adapter takes the daily slot only if every check passes.
+- **Why this recipe:** in 148 of the 207 failed TRAIN runs Gemma had the right files open (116 wrong change, 32 no change).
+  - In practice runs a relay adds a private note with the real fix when Gemma attempts its first change (or at call 12).
+  - Runs that pass the real tests become training examples with the note removed (`research/raw/18_training_round2.md`).
+- **Independent review** (16 findings, table in note 18), applied before the pilot. Main changes:
+  - the note comes only when the lines to change are on Gemma's screen;
+  - the relay lowers `prompt_tokens` by the note's size, so the harness shortens the history as it would without a note;
+  - examples are built from the relay's journal (requests and replies), not from windows;
+  - own wins are supervised from their first source edit; alpha = 2 × rank; deadline examples count once, first-change examples twice.
+- **Built and pushed:** c2d0d9f (speed tools), ad6ce13 (`make_hints.py`), b36a509 (`takeover_proxy.py`, `takeover_check.py`); then the pilot tools and `exact_data.py`.
+- **Measured without GPUs:**
+  - Blocks for 190 of 207 failed TRAIN tasks (115 clean) and 228 of 248 rebench2 tasks (161 clean).
+  - The note would come in 87 of the 175 non-dev failed TRAIN runs (55 at the first change attempt, 32 at call 12).
+  - The relay passes every HTTP check against a stand-in server (positions A and B, first change and deadline).
+- **Speed on the T4s:** rank 16 costs ×2.92 at 1 request and ×2.28 at 4 requests (round 1's rank 32: ×3.5 and ×2.74).
+- **Running at 08:45 UTC:** tmux `r2speed` (ranks 8 and 32, then the plain server), `r2l4` (Kaggle speed notebooks for ranks 16 and 8), `r2pilot` (waits for `r2speed`, then the 12 pilot tasks).
+- **Kaggle:** Nov 18 (58487138) **0.15**; Nov 19 (58531934) scoring. Budget-Fit's last three draws: 0.17, 0.13, 0.15.
+- **Leaderboard, Nov 19 06:50 UTC:** the 0.29 entry is gone; the top is 0.24, held by 14 teams.
