@@ -691,3 +691,13 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Exact rendering:** `exact_data.py check-render` found one missing token in 50 of 50 requests when contents are passed as strings (the template adds a space after a system-message part; vLLM passes lists of parts). Fixed: 400 of 400 logged requests now tokenise exactly like the server. Round 1 trained on the string form.
 - **Pilot:** started 09:02 UTC through the relay (12 tasks, position A, the approved note text); both relays up, journals being written. Expected end about 10:40 UTC.
 - **Task lists for the note runs** (`results/lists/r2_tk_*.txt`): failed TRAIN 81 (53 clean), rebench2 clean 155, dev 14 (held out), rebench2 rest 67: 317 runs, about 32 hours.
+
+## 2026-11-19 10:05 UTC — pilot A done: the note in a tool result fails the pilot rule; a new note form is proposed
+- **Pilot A** (12 tasks, 09:02–09:52 UTC, the approved note text in the latest tool result; `research/raw/18_training_round2.md` section 7):
+  - note given in 10 of 12; tests pass in 7 of the 10; **first block applied within 2 steps in 4 of 10** (the rule needs 80%); leak words in 4 of 10; clean examples 3 of 10.
+  - Gemma treats the note as outside advice: it names it, argues with it or finishes its own plan first. At the deadline it mostly ignores it (0 of 4 within 2 steps).
+  - Code inside the tool result's JSON shows `\n` and `\"`; once Gemma copied `\n` into the file as text.
+- **Clock bug found and fixed:** `scorer-host-venv-plus` had no stretched clock, so the 6 rebench2 pilot runs had 8 real minutes (3 timed out). `patch_replica_clock.py` is now applied there; the harness code is identical in both environments.
+- **Exact rendering on the pilot's journal:** 97 of 97 plain and 88 of 88 noted requests match the server's token counts.
+- **Position C proposed:** the fix goes into Gemma's own latest thinking, in the first person (text in note 18). Built and checked without GPUs. It changes the approved note text, so it waits for the user.
+- **Waiting for the user (two decisions):** go on although no rank meets the 10% speed rule; and the note form for the next pilot. No GPU job of ours runs; the plain server holds the 4 cards.

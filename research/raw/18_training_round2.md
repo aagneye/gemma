@@ -112,3 +112,58 @@ A second reader checked the design against the code. Its findings, and what I di
 - L4 speed at ranks 16 and 8 (Kaggle notebook, speed only).
 - The pilot (12 tasks), then the 40-hour note runs.
 - The dataset builder and the held-out check in `exact_data.py`; `chain_r2.sh`.
+
+## 7. Pilot A (Nov 19, 09:02–09:52 UTC): the approved note in a tool result
+12 tasks (6 failed TRAIN tasks where the note comes on the recorded run, 6 rebench2 tasks), Budget-Fit V5 unchanged,
+position A, the approved text. Report: `results/r2_pilot_a.md` on the VM.
+
+| Measure | Result |
+|---|---|
+| Note given | 10 of 12 (6 at the first change attempt, 4 at the deadline) |
+| Tests pass, noted runs | 7 of 10 |
+| First block applied within 2 steps (pilot rule: at least 80%) | **4 of 10** |
+| … at a first change attempt | 4 of 6 (one of the other two hit the clock bug below, one a shortened history) |
+| … at the deadline | 0 of 4 |
+| Leak words in Gemma's text after the note | 4 of 10 ("the private note says" three times, "was provided" once) |
+| Clean examples | 3 of 10 |
+
+What Gemma does with a note in a tool result:
+- **It treats it as outside advice.** It names it ("Wait, the private note is giving me the fix. I should follow it but
+  I'll double check"), argues with it ("the private note is usually very accurate for these tasks. However, the
+  problem statement explicitly mentions…"), or first finishes its own plan (beniget_80 applied the fix 11 steps later).
+- **At the deadline it mostly ignores it** (filesystemspec_1536 kept exploring until the calls ran out; conllu_35 wrote
+  its own, wrong, variant). The review predicted this from the budget warning.
+- **The code in the note shows escape marks.** A tool result is JSON, so the note's blocks appear with `\n` and `\"`.
+  In mongoengine_2858 Gemma copied `\n` into the file as two characters.
+
+Other findings:
+- **Clock bug in half of the pilot:** `scorer-host-venv-plus` (the rebench2 environment) never had the stretched clock
+  (`patch_replica_clock.py`), so the 6 rebench2 runs had 8 real minutes; 3 ended with "Agent exceeded session timeout".
+  Fixed at 09:58 UTC: the patch is applied and the harness code is now identical in both environments.
+- **The history was shortened after the note in 3 of the 6 TRAIN runs** (prompts above 10k tokens at the note). The
+  relay moved the blocks not yet applied to the newest tool result, as designed.
+- **Exact rendering on live data** (`exact_data.py check-journal`): local token count = server count in 97 of 97 plain
+  requests; in 88 of 88 noted requests the lowered count equals the note-free local count.
+- **Relay fixes after the pilot:** the call count now survives a shortened history (it restarted at the visible calls);
+  blocks that change only comments or blank lines are left out of the note (`make_hints.py`).
+
+**Verdict by the pilot rule:** position A fails (4 of 10 within 2 steps, 80% needed).
+
+**Position C (proposed, needs the user's approval since it changes the note text):** the fix is appended to Gemma's own
+thinking of the step that made the latest tool call, in the first person, so it reads as its own conclusion: plain text,
+no escape marks, nothing outside to name. Text (`takeover_proxy.py` PLAN_HEAD / PLAN_TAIL):
+
+```
+I have seen enough. The correct fix is exactly this change:
+
+File: <path>
+Replace:
+<old lines>
+With:
+<new lines>
+
+Next step: state in two or three sentences what is wrong in this code and what has to change, naming the function, then make the change with edit_file, one call per block, copying each "Replace" text exactly.
+```
+
+Implemented in the relay; `takeover_check.py http` passes for C at a first change and at the deadline; the rendered
+prompt shows the plan inside the model's thought channel right before its last tool call.
