@@ -19,6 +19,10 @@ python3 ~/gemma4_vm/takeover_proxy.py --listen $RP --upstream 127.0.0.1:8000 --h
 RELAY=$!; trap 'kill $RELAY 2>/dev/null' EXIT
 for i in $(seq 1 20); do curl -s -m 5 http://127.0.0.1:$RP/v1/models | grep -q gemma-4-31b && break; sleep 1; done
 curl -s -m 5 http://127.0.0.1:$RP/v1/models | grep -q gemma-4-31b || { echo "the relay does not answer on :$RP"; exit 1; }
+# one tiny request through the relay to the model: a broken relay must stop the run here, not after an hour
+curl -s -m 300 http://127.0.0.1:$RP/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"model": "gemma-4-31b-it-qat-w4a16-ct", "messages": [{"role": "user", "content": "Say ok."}], "max_tokens": 4}' | grep -q '"choices"' \
+  || { echo "the relay does not pass a request to the model"; exit 1; }
 [ "$POOL" = rebench2 ] && export VENV=scorer-host-venv-plus
 echo "$(date -u) note_runs $TAG: pool $POOL, list $LIST ($(grep -vc '^#' $LIST) tasks), position $POSITION, deadline $DEADLINE, concurrency $CONC"
 PORT=$RP ROOT=data/$POOL ORDER_CSV=results/${POOL}_soundness.csv TMPDIR=$R/tmp/replica TASK_LIST=$LIST REPLICA_TIME_SCALE=$SCALE \
