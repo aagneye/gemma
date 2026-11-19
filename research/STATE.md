@@ -674,3 +674,20 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Running at 08:45 UTC:** tmux `r2speed` (ranks 8 and 32, then the plain server), `r2l4` (Kaggle speed notebooks for ranks 16 and 8), `r2pilot` (waits for `r2speed`, then the 12 pilot tasks).
 - **Kaggle:** Nov 18 (58487138) **0.15**; Nov 19 (58531934) scoring. Budget-Fit's last three draws: 0.17, 0.13, 0.15.
 - **Leaderboard, Nov 19 06:50 UTC:** the 0.29 entry is gone; the top is 0.24, held by 14 teams.
+
+## 2026-11-19 09:10 UTC — speed test: no rank meets the 10% rule; exact rendering proven; decision with the user
+- **Speed with an adapter, 1 request at a time** (the scorer runs tasks one at a time):
+
+  | Rank | Kaggle L4 | Our T4s |
+  |---|---|---|
+  | 32 (round 1) | ×1.214 | ×3.58 |
+  | 16 | ×1.128 | ×2.92 |
+  | 8 | ×1.158 | ×3.06 |
+
+  - Below rank 32 the rank no longer matters: the cost is in the LoRA kernels on all 410 wrapped layers.
+  - **The plan's step-1 rule (at most 10% slower on Kaggle) is missed by both ranks.** By the plan the round stops here.
+  - The 12-hour limit depends on slowdown × output tokens: Budget-Fit ×1.00 never exceeded; v6 ×1.14 exceeded once in two runs; round 1's adapter ×1.10–1.17 exceeded. A rank-16 adapter writing ×0.91 of Budget-Fit's tokens (round 1's measured ratio) lands at ×1.03.
+  - Asked the user at 09:10 UTC: go on with rank 16 under the plan's runtime rule (slowdown × tokens ≤ 1.05), or stop. The 40-hour note runs do not start without the answer.
+- **Exact rendering:** `exact_data.py check-render` found one missing token in 50 of 50 requests when contents are passed as strings (the template adds a space after a system-message part; vLLM passes lists of parts). Fixed: 400 of 400 logged requests now tokenise exactly like the server. Round 1 trained on the string form.
+- **Pilot:** started 09:02 UTC through the relay (12 tasks, position A, the approved note text); both relays up, journals being written. Expected end about 10:40 UTC.
+- **Task lists for the note runs** (`results/lists/r2_tk_*.txt`): failed TRAIN 81 (53 clean), rebench2 clean 155, dev 14 (held out), rebench2 rest 67: 317 runs, about 32 hours.

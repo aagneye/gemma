@@ -81,13 +81,32 @@ A second reader checked the design against the code. Its findings, and what I di
 - **Relay over HTTP against a stand-in server** (`takeover_check.py http`): all checks pass for a first-change case in
   positions A and B and for a deadline case (requests without a note byte-identical; note in the latest tool result;
   same note at the same place later; note-free `prompt_tokens`; journal complete and note-free).
-- **Speed on the T4s** (`results/speed/t4_r*.json`; the server's max rank = the adapter's rank):
+- **Speed with an adapter** (the server's max rank = the adapter's rank, as the scorer sets it; slowdown against the
+  base model; `results/speed/t4_r*.json`, `results/speed/l4_r*.txt`, round 1's `results/replica/lora1_l4_speed.txt`):
 
-  | Rank | 1 request | 4 requests | Long prompt |
-  |---|---|---|---|
-  | 16 | ×2.92 | ×2.28 | ×1.27 |
+  | Rank | T4: 1 request | T4: 4 requests | L4 (Kaggle): 1 request | L4: 4 requests | L4: long prompt |
+  |---|---|---|---|---|---|
+  | 32 | ×3.58 | ×2.71 | ×1.214 | ×1.136 | ×1.075 |
+  | 16 | ×2.92 | ×2.28 | ×1.128 | ×1.107 | ×1.055 |
+  | 8 | ×3.06 | ×2.42 | ×1.158 | ×1.125 | ×1.064 |
 
-  Round 1 at rank 32 measured ×3.5 and ×2.74 (a different, shorter test). Ranks 8 and 32 and the Kaggle L4 numbers follow.
+  - Base speed on the T4s: 32.1 tokens/s at 1 request, 85.1 at 4 (plain server; the LoRA-enabled server serves the base
+    at the same speed).
+  - **Below rank 32 the rank no longer matters:** rank 8 is not faster than rank 16 on either GPU type (the gap is
+    run-to-run noise). The cost is in the LoRA kernels running on all 410 wrapped layers, not in their size. The public
+    figure of 8–9% at rank 8–16 is not reproduced: we measure 11–16%.
+  - **The scorer runs the tasks one at a time** (`research/raw/01_competition_harness.md:72`), so the 1-request column
+    applies: +12.8% at rank 16.
+  - **The plan's step-1 rule (at most 10% slower on Kaggle's GPUs) is missed by both ranks.** By the plan the round stops
+    here; the decision went to the user (Nov 19, 09:10 UTC).
+  - What decides the 12-hour limit is slowdown × output tokens. Known points: Budget-Fit ×1.00 never exceeded (16 runs);
+    v6 at ×1.14 exceeded once in two runs; round 1's adapter at ×1.10–1.17 (×1.214 × 0.91–0.96 tokens) exceeded. A rank-16
+    adapter that writes ×0.91 of Budget-Fit's tokens, as round 1's did on the 77 EVAL tasks, lands at ×1.03.
+- **Exact rendering** (`exact_data.py check-render`, plain server up): with message contents passed as strings the local
+  text missed one token in 50 of 50 requests: the template adds a space after each part of the system message when the
+  content is a list, and vLLM passes lists. With contents passed as lists of text parts, **400 of 400 logged requests
+  tokenise exactly like the server** (3,098–16,427 tokens, before and after compaction). Round 1 trained on the
+  string form.
 
 ## 6. Open
 - L4 speed at ranks 16 and 8 (Kaggle notebook, speed only).
