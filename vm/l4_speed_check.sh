@@ -10,12 +10,20 @@
 # On GO, if SHIP_LINE_FILE exists (written only after the submission notebook's output was checked against the
 # validated bundle), its line "owner/kernel version message" is scheduled for the next daily slot in ship_schedule.txt.
 #   FORCE=1 bash l4_speed_check.sh none [bundle=submissions/budgetfit_v5_lora1] [cand_eval=lora1_eval] [cand_swing=lora1_sw]
+# Speed-only mode (Nov 19, round-2 plan step 1: the cost of a rank is measured BEFORE an adapter of that rank is trained,
+# with a rank-sliced copy of the round-1 adapter, vm/slice_adapter.py): no gate, nothing scheduled, own names.
+#   SPEED_ONLY=1 DS=aagneye/gemma4-31b-lora-r16-speed NB=aagneye/gemma4-31b-lora-speed-r16 TITLE="Gemma4 31B LoRA speed r16" \
+#     OUTF=results/speed/l4_r16.txt S=tmp/speedcheck_r16 MAX_SLOW=1.10 TOK=1 bash l4_speed_check.sh none submissions/budgetfit_v5_spd16
+# TOK = the adapter's output tokens against Budget-Fit's, used only in the printed generation-time line (round 1: 0.96).
 set -u
 GATE=${1:-gate1}; BUNDLE=${2:-submissions/budgetfit_v5_lora1}; CE=${3:-lora1_eval}; CS=${4:-lora1_sw}
-R=/mnt/biohub/kdata/gemma4; cd $R; K=$R/.venv/bin/kaggle; RR=results/replica; S=tmp/speedcheck
-DS=aagneye/gemma4-31b-lora1-adapter; NB=aagneye/gemma4-31b-lora-speed
+R=/mnt/biohub/kdata/gemma4; cd $R; K=$R/.venv/bin/kaggle; RR=results/replica; S=${S:-tmp/speedcheck}
+DS=${DS:-aagneye/gemma4-31b-lora1-adapter}; NB=${NB:-aagneye/gemma4-31b-lora-speed}; TITLE=${TITLE:-Gemma4 31B LoRA speed}
+OUTF=${OUTF:-$RR/lora1_l4_speed.txt}; TOK=${TOK:-0.96}; mkdir -p $(dirname $OUTF)
 MAX_SLOW=${MAX_SLOW:-1.125}; SHIP_LINE_FILE=${SHIP_LINE_FILE:-results/lists/adapter_ship_line.txt}
-if [ "${FORCE:-0}" != 1 ]; then
+if [ "${SPEED_ONLY:-0}" = 1 ]; then
+  echo "$(date -u) SPEED_ONLY=1: speed measurement of $BUNDLE only (no gate, nothing scheduled)"
+elif [ "${FORCE:-0}" != 1 ]; then
   bash ~/gemma4_vm/after_session.sh $GATE
   { python3 ~/gemma4_vm/verdict.py --base $RR/bf5_eval --cand $RR/$CE --tasks results/lists/eval_ts01.txt --gain 3 --cost 1.08 --cost-keys calls,tok
     python3 ~/gemma4_vm/verdict.py --base $RR/bf5_eval --cand $RR/$CE --gain 0 --cost 1.08 --cost-keys calls,tok
@@ -30,26 +38,29 @@ if $K datasets status $DS 2>/dev/null | grep -qi ready; then
   echo "dataset $DS already exists"
 else
   rm -rf $S/ds && mkdir -p $S/ds && cp $BUNDLE/adapters/main_lora/* $S/ds/
-  printf '{"title": "gemma4-31b-lora1-adapter", "id": "%s", "licenses": [{"name": "other"}]}\n' $DS > $S/ds/dataset-metadata.json
+  printf '{"title": "%s", "id": "%s", "licenses": [{"name": "other"}]}\n' ${DS#*/} $DS > $S/ds/dataset-metadata.json
   $K datasets create -p $S/ds 2>&1 | grep -v Warning | tail -1
   for i in $(seq 1 60); do $K datasets status $DS 2>/dev/null | grep -qi ready && break; sleep 30; done
   echo "$(date -u) dataset status: $($K datasets status $DS 2>&1 | grep -v Warning | tail -1)"
 fi
-python3 ~/gemma4_vm/make_kaggle_speed.py $S/nb $NB "Gemma4 31B LoRA speed" --bundle $BUNDLE --adapter-dataset $DS || exit 1
+python3 ~/gemma4_vm/make_kaggle_speed.py $S/nb $NB "$TITLE" --bundle $BUNDLE --adapter-dataset $DS || exit 1
 $K kernels push -p $S/nb --accelerator NvidiaL4 -t 5400 2>&1 | grep -v Warning | tail -1
 st=""; for i in $(seq 1 75); do sleep 120; st=$($K kernels status $NB 2>&1 | grep -v Warning); echo "$st" | grep -qiE "complete|error|cancel" && break; done
 echo "$(date -u) $st"
 rm -rf $S/out && $K kernels output $NB -p $S/out > /dev/null 2>&1
-python3 - "$S/out" "$MAX_SLOW" <<'EOF' | tee $RR/lora1_l4_speed.txt
+python3 - "$S/out" "$MAX_SLOW" "$TOK" <<'EOF' | tee $OUTF
 import glob, json, sys
 f = sorted(glob.glob(sys.argv[1] + '/**/speed.json', recursive=True))
 if not f: print('RUNTIME UNKNOWN: no speed.json (see the notebook log)'); sys.exit()
-r = json.load(open(f[0])); lim = float(sys.argv[2])
-print({k: v for k, v in r.items() if k.startswith(('slowdown', 'lora_server', 'vllm_up', 'gpu', 'tp'))})
+r = json.load(open(f[0])); lim = float(sys.argv[2]); tok = float(sys.argv[3])
+print({k: v for k, v in r.items() if k.startswith(('slowdown', 'lora_server', 'vllm_up', 'gpu', 'tp', 'ranks'))})
 worst = max(r['slowdown_decode_c1'], r['slowdown_decode_c4'])
-print(f"RUNTIME {'GO' if worst <= lim else 'HOLD'}: worst decode slowdown {worst:.3f} (limit {lim}); generation time x{0.96 * worst:.3f} of Budget-Fit's")
+print(f"RUNTIME {'GO' if worst <= lim else 'HOLD'}: worst decode slowdown {worst:.3f} (limit {lim}); generation time x{tok * worst:.3f} of Budget-Fit's at x{tok} output tokens")
 EOF
-if grep -q "^RUNTIME GO" $RR/lora1_l4_speed.txt; then
+if [ "${SPEED_ONLY:-0}" = 1 ]; then
+  echo "$(date -u) l4_speed_check done (speed only): $OUTF"; exit 0
+fi
+if grep -q "^RUNTIME GO" $OUTF; then
   if [ -s $SHIP_LINE_FILE ]; then
     day=$(date -u -d "+1 day" +%F); [ "$(date -u +%H%M)" -lt 0005 ] && day=$(date -u +%F)
     echo "$day $(head -1 $SHIP_LINE_FILE)" >> results/ship_schedule.txt

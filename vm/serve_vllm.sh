@@ -3,7 +3,7 @@
 # dtype fp16 (T4 has no bf16), lower memory target, max 8 sequences, CUDA graphs only for batch 1-8 (or eager),
 # plus a local patch to vLLM's Triton attention tile size (T4 has 64 KB shared memory; see vm/README.md).
 #   MODEL=gemma-4-31b-it-qat-w4a16-ct|gemma-4-12b-it-qat-w4a16-ct|gemma-4-e4b-it-qat-w4a16-ct [ADAPTER=<peft dir>]
-#   [TP=4] [GPUS=1,2] [PORT=8000] [MODE=graphs|eager] [MEM=0.84] [ATTN=FLEX_ATTENTION] [MAXSEQ=8] bash serve_vllm.sh
+#   [TP=4] [GPUS=1,2] [PORT=8000] [MODE=graphs|eager] [MEM=0.84] [ATTN=FLEX_ATTENTION] [MAXSEQ=8] [MAX_LORA_RANK=32] bash serve_vllm.sh
 # TP = tensor parallel size (the scorer uses 4 on 4xL4; the E4B fits one T4 with TP=1). GPUS = CUDA_VISIBLE_DEVICES,
 # so several single-GPU servers can run side by side on different PORTs (one experiment per free T4).
 # The 12B needs the Gemma4ForCausalLM override (as in the scorer); the 31B and E4B are served without overrides.
@@ -32,9 +32,13 @@ case "$MODEL" in *12b*) EXTRA+=(--hf-overrides '{"architectures": ["Gemma4ForCau
 # hot (un)loading through /v1/load_lora_adapter, so later adapters can be evaluated without restarting the server
 # (a restart frees the GPU for a minute, and on this shared VM another project takes free cards within minutes).
 [ -n "${LORA_DYNAMIC:-}" ] && export VLLM_ALLOW_RUNTIME_LORA_UPDATING=True
-if [ -n "$ADAPTER" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank 32 --lora-modules "main_lora=$ADAPTER")
-elif [ -n "${LORA_DYNAMIC:-}" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank 32); fi
-echo "serve_vllm: model=$MODEL tp=$TP gpus=${GPUS:-all} port=$PORT mode=$MODE mem=$MEM maxseq=$MAXSEQ attn=${ATTN:-default} adapter=${ADAPTER:-none}"
+# MAX_LORA_RANK (Nov 19): vLLM runs the LoRA kernels on every wrapped layer with a buffer of THIS rank, whatever the
+# adapter holds (lora/layers/base_linear.py apply -> punica add_lora_linear), so the decode cost follows the server's
+# max rank. The scorer sets it to the largest rank in the bundle: serve with the adapter's own rank to measure like Kaggle.
+MAX_LORA_RANK=${MAX_LORA_RANK:-32}
+if [ -n "$ADAPTER" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank $MAX_LORA_RANK --lora-modules "main_lora=$ADAPTER")
+elif [ -n "${LORA_DYNAMIC:-}" ]; then EXTRA+=(--enable-lora --max-loras 2 --max-lora-rank $MAX_LORA_RANK); fi
+echo "serve_vllm: model=$MODEL tp=$TP gpus=${GPUS:-all} port=$PORT mode=$MODE mem=$MEM maxseq=$MAXSEQ attn=${ATTN:-default} adapter=${ADAPTER:-none} max_lora_rank=$MAX_LORA_RANK"
 vllm serve models/$MODEL --served-model-name $MODEL \
   --host 127.0.0.1 --port $PORT --tensor-parallel-size $TP --dtype float16 --max-model-len 32768 \
   --gpu-memory-utilization $MEM --max-num-seqs $MAXSEQ "${GRAPH_FLAGS[@]}" \
