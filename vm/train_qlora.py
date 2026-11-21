@@ -251,6 +251,11 @@ def main():
     ap.add_argument("--chunk", type=int, default=512, help="tokens per cross-entropy chunk (512 -> ~0.5 GB fp32 logits on a 262k vocab)")
     ap.add_argument("--keep-towers", action="store_true", help="keep the vision/audio towers on the GPU (default: moved to cpu)")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--init-scale", type=float, default=2.0**9,
+                    help="fp16 only: the GradScaler's first loss scale. An update whose scaled gradients overflow fp16 is thrown away "
+                         "and the scale is halved; it is not raised again in a run this short. Round 1 (8 rows per update) started "
+                         "at 2^14 and lost updates 5, 10, 16 and 17 of 41 on the way down to 2^10 = 128 per row, where it stayed; "
+                         "2^9 is the same 128 per row at 4 rows per update")
     ap.add_argument("--pipeline", type=int, default=0, help="split the model over this many GPUs in one process (naive pipeline; the 31B on 4x L4)")
     ap.add_argument("--layers-per-gpu", default=None, help="decoder layers per GPU for --pipeline, e.g. 8,18,17,17 (default: sized from the config)")
     ap.add_argument("--attn", choices=["sdpa", "qchunk"], default="sdpa", help="qchunk = query-chunked eager attention (head-dim-512 global layers at 16k)")
@@ -316,7 +321,7 @@ def main():
             opt = torch.optim.AdamW(params, lr=a.lr)
     sched = get_cosine_schedule_with_warmup(opt, max(1, int(a.warmup * total)), total)
     use_scaler = dt == torch.float16
-    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler, init_scale=2.0**14)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler, init_scale=a.init_scale)
     if is_main:
         say(f"windows {len(ds)} (dropped over max-len {ds.dropped}) | per-rank micro-batches/epoch {len(dl)} | optimizer steps total {total} | dtype {dt} | world {world} | grad_accum {a.grad_accum} | {type(opt).__name__}")
         json.dump(vars(a), open(f"{a.out}/args.json", "w"), indent=1)
@@ -389,7 +394,8 @@ def main():
                     rec = {"step": step, "epoch": round(step / steps_per_epoch, 3), "loss": round(run_loss / max(1, run_n), 4), "grad_norm": round(float(gn), 3),
                            "lr": sched.get_last_lr()[0], "tok_s_per_rank": round(tokens / el), "tok_s_total": round(tokens * world / el),
                            "sup_tokens": sup * world, "skipped_nonfinite": skipped, "oom_rows": oom_rows, "elapsed_min": round(el / 60, 1),
-                           "eta_min": round((el / max(1, step - step0)) * (total - step) / 60, 1), "mem_gb": peak()}
+                           "eta_min": round((el / max(1, step - step0)) * (total - step) / 60, 1), "mem_gb": peak(),
+                           "loss_scale": scaler.get_scale()}      # halved after every update lost to an fp16 overflow (grad_norm NaN)
                     if a.pipeline > 1: rec["mem_reserved_gb"] = peak(torch.cuda.max_memory_reserved)
                     say(json.dumps(rec)); log.write(json.dumps(rec) + "\n"); log.flush(); run_loss = 0.0; run_n = 0
                 if is_main and step % a.save_every == 0:
