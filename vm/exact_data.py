@@ -17,8 +17,8 @@ the model's replies. Nothing is summarised, capped or rewritten.
   tokenize       examples -> train.parquet (input_ids, labels, n, fix_labels, kind, iid) for train_qlora.py:
                    .venv/bin/python exact_data.py tokenize datasets/r2/all.jsonl --max-len 14336 --out datasets/r2/tok_31b
                    held-out rows: ... tokenize datasets/r2/heldout.jsonl --first-step-only --w-first 1 --out datasets/r2/tok_heldout
-                   --token-budget N leaves out own-win rows, the longest first, until all rows hold at most N tokens
-                   (training time is tokens: about 18 ms each on the four T4s)
+                   --token-budget N leaves out own-win rows, the longest first, then the second copies of note rows,
+                   until all rows hold at most N tokens (training time is tokens: about 18 ms each on the four T4s)
 
 What an example is (build):
   * A run is cut into stretches: a new stretch starts when the harness shortened the history (ADK compaction) or added a
@@ -403,14 +403,18 @@ def cmd_tokenize(a):
                          "source": s.get("source") or "", "copy": rep})
         k = per_kind[s["kind"]]; k["examples"] += 1; k["rows"] += w; k["tokens"] += end * w; k["learned tokens"] += nsup * w
         k["fix tokens"] += sum(1 for x in fix if x != -100)
-    if a.token_budget:                                         # training time is tokens: own wins give way, the longest first
-        total = sum(r["n"] for r in rows); drop = set(); k = per_kind["own"]
-        for r in sorted((r for r in rows if r["kind"] == "own"), key=lambda r: -r["n"]):
-            if total <= a.token_budget: break
-            drop.add(id(r)); total -= r["n"]; stats["own rows left out for the token budget"] += 1
-            k["rows"] -= 1; k["tokens"] -= r["n"]; k["learned tokens"] -= sum(1 for x in r["labels"] if x != -100); k["left out for the budget"] += 1
+    if a.token_budget:
+        # Training time is tokens. What gives way, the longest first: own wins (the model already does these), then the
+        # second copies of first-change note rows. A note row is never left out altogether.
+        total = sum(r["n"] for r in rows); drop = set()
+        for pick, what in ((lambda r: r["kind"] == "own", "own rows"), (lambda r: r["copy"] > 0, "second copies of note rows")):
+            for r in sorted((r for r in rows if pick(r) and id(r) not in drop), key=lambda r: -r["n"]):
+                if total <= a.token_budget: break
+                drop.add(id(r)); total -= r["n"]; stats[f"{what} left out for the token budget"] += 1
+                k = per_kind[r["kind"]]; k["rows"] -= 1; k["tokens"] -= r["n"]; k["learned tokens"] -= sum(1 for x in r["labels"] if x != -100)
+                k["left out for the budget"] += 1
         rows = [r for r in rows if id(r) not in drop]
-        if total > a.token_budget: stats["tokens over the budget after all own rows were left out"] = total - a.token_budget
+        if total > a.token_budget: stats["tokens over the budget with every note row once"] = total - a.token_budget
     os.makedirs(a.out, exist_ok=True)
     random.Random(a.seed).shuffle(rows)
     pq.write_table(pa.Table.from_pylist(rows), f"{a.out}/train.parquet")
@@ -440,7 +444,7 @@ def main():
     p.add_argument("--seed", type=int, default=0); p.add_argument("--model", default=MODEL_DIR)
     p.add_argument("--first-step-only", action="store_true", help="keep each example up to its first learned step (held-out rows for heldout_loss.py)")
     p.add_argument("--token-budget", type=int, default=0, help="at most this many tokens in all rows: own-win rows are left out, the longest "
-                                                               "first, until the set fits (0 = no budget; note rows are never left out)")
+                                                               "first, then second copies of note rows (0 = no budget; a note row always stays once)")
     a = ap.parse_args()
     ok = {"check-render": cmd_check_render, "check-journal": cmd_check_journal, "build": cmd_build, "tokenize": cmd_tokenize}[a.cmd](a)
     sys.exit(0 if ok else 1)
