@@ -701,3 +701,17 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Exact rendering on the pilot's journal:** 97 of 97 plain and 88 of 88 noted requests match the server's token counts.
 - **Position C proposed:** the fix goes into Gemma's own latest thinking, in the first person (text in note 18). Built and checked without GPUs. It changes the approved note text, so it waits for the user.
 - **Waiting for the user (two decisions):** go on although no rank meets the 10% speed rule; and the note form for the next pilot. No GPU job of ours runs; the plain server holds the 4 cards.
+
+## 2026-11-21 10:20 UTC — the round goes on at rank 16; pilots B and C running; example builder and chain built
+- **User decisions (Nov 21):** "Go on, rank 16" (09:45 UTC: the round continues although no rank meets the 10% speed rule; the plan's runtime rule, slowdown × tokens ≤ 1.05, stays) and "Yes, pilot it" (10:00 UTC: the first-person note form, position C, may be piloted and used if it gives more clean examples).
+- **Two days lost:** the question of Nov 19 10:05 UTC was answered on Nov 21; the session had ended. Our server held the four cards idle in between.
+- **Dates re-planned to the Nov 26 freeze** (about one day to spare): pilots until about 12:30 UTC today; note runs 30 hours; training by Nov 23 midday; two test passes by Nov 24 evening; first adapter slot Nov 25 00:10 UTC if it passes.
+- **Kaggle:** Nov 19 (58531934) **0.20**, our best; Nov 20 (58587848) 0.17; Nov 21 (58642667) scoring.
+- **Running:** tmux `r2pilot` (pilot B: the approved note at the end of the task text, started 09:50 UTC, both pools on the stretched clock now), `r2pilotc` (pilot C queued behind it).
+- **Built and pushed since Nov 19** (all tried without GPUs where possible):
+  - `exact_data.py build` / `tokenize`: on pilot A's records 3 clean note runs and 101 own wins; every learned step's prompt is a token-for-token prefix of its example (0 failures in 106 examples).
+  - `heldout_loss.py`, `adapter_effect.py`, `chain_r2.sh` (steps 4–8 with the stop rules), trainer options `--fit-ladder` and `--probe-only`.
+  - Blocks rebuilt without comment-only changes; task lists: failed TRAIN 84 (55 clean), rebench2 clean 156, dev 14, rebench2 rest 66 = 320 runs.
+- **Facts found while building:**
+  - A reply's thinking keeps 0–4 trailing newlines in the next request; traces strip them. Examples rebuilt from traces (round 1's wins) get the most common ending and match the server's token counts, but not every token.
+  - Gemma often writes its own check script as `test_*.py` in the workspace root. The harness calls such a name protected; the builder treats it as a scratch file, not as a test edit (round 1 dropped 53 runs for this).

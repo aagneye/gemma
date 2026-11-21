@@ -198,3 +198,11 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
   - After the harness shortens the history, the first user message is the summary (a list of text parts), so the relay recognises the task by tool-call ids.
   - `note_runs.sh` removes the run and journal folders of a reused TAG, like `run_replica.sh`.
   - The request log holds requests only. The relay's journal (`results/takeover/<tag>/<task>.jsonl`) also holds the replies.
+- **Examples and training chain (Nov 21):**
+  - `.venv/bin/python exact_data.py build --notes <tags> --hints <hints> --own results/replica/bf5_train results/replica/bf5t06_train2 --exclude results/lists/dev48.txt --out datasets/r2/all.jsonl`, then `tokenize datasets/r2/all.jsonl --max-len <fit> --out datasets/r2/tok_31b`. Held-out rows: `build --notes r2_tk_dev_* --only results/lists/dev48.txt`, then `tokenize --first-step-only --w-first 1`.
+  - `bash chain_r2.sh` runs steps 4–8 (examples, fit test, training, held-out check, bundle, server, test passes, verdict). `START_AT=7` resumes at a later step. Log: `logs/r2_chain.log`.
+  - `heldout_loss.py --adapter <dir> --data datasets/r2/tok_heldout` needs free GPUs; `adapter_effect.py --examples <jsonl>` needs the server with the adapter.
+- **More pitfalls:**
+  - `scorer-host-venv-plus` needs `patch_replica_clock.py` after every rebuild, like `scorer-host-venv`. Without it a rebench2 run has 8 real minutes (found in pilot A, fixed Nov 19).
+  - Traces strip the trailing newlines of thinking; the relay's journal keeps them. Build examples from journals where they exist.
+  - A question that needs the user's answer goes into the next-step box. Two question dialogs were lost when the session ended (Nov 19).
