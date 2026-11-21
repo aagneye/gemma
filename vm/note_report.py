@@ -20,7 +20,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import autopsy as A
 
 ROOT = os.environ.get("GEMMA_ROOT", "/mnt/biohub/kdata/gemma4")
-LEAK_RX = re.compile(r"private note|this note\b|the note\b|was provided|provided fix|given fix|i was told|as instructed", re.I)
+# Words that show the model is talking about the note: the approved list for the note in a tool result or in the task
+# text, plus verbatim pieces of the first-person form (position C), which would be copies of text the example lacks.
+LEAK_RX = re.compile(r"private note|this note\b|the note\b|was provided|provided fix|given fix|i was told|as instructed"
+                     r"|i have seen enough|correct fix is exactly|next step: state|copying each .replace. text", re.I)
 norm = lambda s: "\n".join(l.strip() for l in str(s or "").split("\n") if l.strip())
 
 
