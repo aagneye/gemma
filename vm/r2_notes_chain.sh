@@ -5,8 +5,9 @@
 #   [POSITION=A] [BOX_HOURS=40 | BOX_END=<epoch seconds>] [CHUNK=40] [WAIT_FOR=<tmux session>] bash r2_notes_chain.sh
 # Groups, in this order (results/lists/r2_tk_<name>.txt):
 #   train      failed TRAIN tasks where the note comes on the recorded run      (pool rebench)
-#   rb2_clean  rebench2 tasks with a clean small fix, never run before          (pool rebench2)
 #   dev        failed dev tasks, held out for the check after training          (pool rebench)
+#              (second since Nov 21: the plan's held-out check needs these rows even if the box closes early)
+#   rb2_clean  rebench2 tasks with a clean small fix, never run before          (pool rebench2)
 #   rb2_rest   the other rebench2 tasks with blocks                             (pool rebench2)
 # Output per chunk: results/replica/r2_tk_<name>_<nn>, results/takeover/r2_tk_<name>_<nn>; log logs/r2_notes.log.
 # Shared VM: the server is started only when all four cards are free; other jobs are never touched.
@@ -26,7 +27,7 @@ ensure_server() {
 END=${BOX_END:-$(( $(date +%s) + BOX * 3600 ))}          # BOX_END=<epoch seconds> keeps the box's end after a restart
 log "note runs start: position $POS, box until $(date -u -d @$END), chunks of $CHUNK"
 mkdir -p tmp/r2
-for g in "train rebench hints_train" "rb2_clean rebench2 hints_rb2" "dev rebench hints_train" "rb2_rest rebench2 hints_rb2"; do
+for g in "train rebench hints_train" "dev rebench hints_train" "rb2_clean rebench2 hints_rb2" "rb2_rest rebench2 hints_rb2"; do
   set -- $g; name=$1; pool=$2; hints=datasets/r2/$3.jsonl
   rm -f tmp/r2/chunk_${name}_*; grep -v '^#' results/lists/r2_tk_$name.txt | split -l $CHUNK -d - tmp/r2/chunk_${name}_
   for c in tmp/r2/chunk_${name}_*; do
