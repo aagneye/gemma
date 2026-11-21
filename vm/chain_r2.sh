@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Round 2 after the note runs (Nov 21; steps 4-8 of research/PLAN_ROUND2.md with their stop rules):
 #   4  examples from the note runs and round 1's wins; floor check
-#   5  fit test, tokens, training (rank 16, alpha 32, one pass, one update per 4 examples, checkpoint every 10 updates)
+#   5  fit test (one run per length), tokens inside the time budget, training (rank 16, alpha 32, one pass, one update
+#      per 4 examples, checkpoint every 10 updates, one restart from the newest checkpoint)
 #   6  sanity check on held-out dev examples (heldout_loss.py); bundle, server with the adapter, effect check
 #   7  test pass 1 on the 77 EVAL tasks: the 43 tasks Budget-Fit does not always solve first (11 needed to reach 45)
 #   8  test pass 2; verdict.py over all pairs with Budget-Fit's four passes; runtime rule
-#   [WAIT_FOR=r2notes] [EXTRA_TAGS="r2_pilot_train_c r2_pilot_rb2_c"] [RANK=16] [ALPHA=32] [T4_SLOW=2.279] [L4_SLOW=1.128] bash chain_r2.sh
+#   [WAIT_FOR=r2notes] [EXTRA_TAGS="r2_pilot_train_c r2_pilot_rb2_c"] [RANK=16] [ALPHA=32] [T4_SLOW=2.279] [L4_SLOW=1.128]
+#   [FIT_TRY="15360:9,18,18,15 14336 13312 12288"] [TRAIN_HOURS=19] bash chain_r2.sh
 # A rule that fails stops the chain, stops our model server (the GPUs are free again) and writes the reason to
 # logs/r2_chain.log. START_AT=5|6|7|8 resumes at a later step. Shared VM: it starts work only on free cards and never
 # touches jobs other than its own tmux session `vllm`.
@@ -13,6 +15,10 @@ set -u
 R=/mnt/biohub/kdata/gemma4; cd $R; V=~/gemma4_vm; PY=$R/.venv/bin/python; LOG=logs/r2_chain.log; D=datasets/r2
 RANK=${RANK:-16}; ALPHA=${ALPHA:-$((RANK * 2))}; T4_SLOW=${T4_SLOW:-2.279}; L4_SLOW=${L4_SLOW:-1.128}; START_AT=${START_AT:-4}
 FLOOR_EX=${FLOOR_EX:-60}; FLOOR_TASKS=${FLOOR_TASKS:-45}; MODEL=gemma-4-31b-it-qat-w4a16-ct; BASE=models/gemma-4-31B-it-qat-q4_0-unquantized
+# Lengths the fit test tries, longest first; "N:a,b,c,d" gives that length its own layer split over the four cards.
+# TRAIN_HOURS sizes the token budget (own wins give way first); the trainer's hard stop stays at 20 hours.
+# Without FIT_TRY the list comes from datasets/r2/fit_try.txt, which the GPU test (r2_gpu_smoke.sh) writes.
+FIT_TRY=${FIT_TRY:-$(cat $D/fit_try.txt 2>/dev/null)}; FIT_TRY=${FIT_TRY:-"15360 14336 13312 12288"}; TRAIN_HOURS=${TRAIN_HOURS:-19}
 RUN=runs/31b_r2_r$RANK; BUNDLE=submissions/budgetfit_v5_lora2
 log() { echo "$(date -u) | $*" | tee -a $LOG; }
 stop() { log "ROUND STOPPED: $*"; tmux kill-session -t vllm 2>/dev/null; exit 0; }
@@ -38,17 +44,26 @@ fi
 if [ $START_AT -le 5 ]; then   # ---- 5: fit test, tokens, training ------------------------------------------------
   log "stopping the model server for training"; tmux kill-session -t vllm 2>/dev/null
   wait_free || stop "the GPUs are not free (another job holds them); nothing of theirs was touched"
-  $PY $V/exact_data.py tokenize $D/all.jsonl --max-len 15360 --out $D/tok_probe 2>&1 | grep "^== " | tee -a $LOG
-  $PY $V/train_qlora.py --model $BASE --data $D/tok_probe --out runs/31b_r2_probe --pipeline 4 --attn qchunk --max-len 15360 --rank $RANK --alpha $ALPHA \
-    --fit-probe --fit-ladder 15360,14336,13312,12288 --probe-only > logs/r2_probe.log 2>&1
-  grep fit_probe logs/r2_probe.log | cut -c1-240 | tee -a $LOG
-  FIT=$(grep -o '"fit": [0-9]*' logs/r2_probe.log | tail -1 | grep -o '[0-9]*$')
-  { [ -n "${FIT:-}" ] && [ "$FIT" -ge 12288 ]; } || stop "the fit test found no length that fits (logs/r2_probe.log)"
-  echo $FIT > $D/fit.txt; log "length limit: $FIT tokens"
-  $PY $V/exact_data.py tokenize $D/all.jsonl --max-len $FIT --out $D/tok_31b 2>&1 | grep -v Warning | tee -a $LOG
+  T0=${FIT_TRY%% *}; TOP=${T0%%:*}
+  $PY $V/exact_data.py tokenize $D/all.jsonl --max-len $TOP --out $D/tok_probe 2>&1 | grep "^== " | tee -a $LOG
+  FIT=""; MS=""; SPL=""
+  for T in $FIT_TRY; do     # one process per length: the layer split over the cards is sized from --max-len, as in training
+    N=${T%%:*}; SPL=""; [ "$T" != "$N" ] && SPL="--layers-per-gpu ${T#*:}"
+    timeout 1800 $PY $V/train_qlora.py --model $BASE --data $D/tok_probe --out runs/31b_r2_probe --pipeline 4 --attn qchunk --max-len $N --rank $RANK --alpha $ALPHA \
+      $SPL --fit-probe --fit-ladder $N --probe-only > logs/r2_probe_$N.log 2>&1
+    grep -h "fit_probe\|layers per GPU" logs/r2_probe_$N.log | cut -c1-300 | tee -a $LOG
+    if [ "$(grep -o '"fit": [0-9]*' logs/r2_probe_$N.log | tail -1 | grep -o '[0-9]*$')" = "$N" ]; then
+      FIT=$N; MS=$(grep -o '"ms_per_token": [0-9.]*' logs/r2_probe_$N.log | tail -1 | grep -o '[0-9.]*$'); break
+    fi
+    wait_free || stop "the GPUs are not free during the fit test"
+  done
+  [ -n "$FIT" ] || stop "the fit test found no length that fits (logs/r2_probe_*.log)"
+  BUDGET=$(python3 -c "print(int($TRAIN_HOURS * 3.6e6 / ${MS:-18.5}))")
+  echo $FIT > $D/fit.txt; log "length limit: $FIT tokens ${SPL:-(layer split sized by the trainer)}; ${MS:-?} ms per token at that length; token budget for $TRAIN_HOURS h of training: $BUDGET"
+  $PY $V/exact_data.py tokenize $D/all.jsonl --max-len $FIT --token-budget $BUDGET --out $D/tok_31b 2>&1 | grep -v Warning | tee -a $LOG
   [ -f $D/heldout.jsonl ] && $PY $V/exact_data.py tokenize $D/heldout.jsonl --max-len $FIT --first-step-only --w-first 1 --out $D/tok_heldout 2>&1 | grep "^== " | tee -a $LOG
   rm -rf $RUN; mkdir -p $RUN; wait_free || stop "the GPUs are not free before training"
-  train() { timeout $((1200 * 60 + 3600)) $PY $V/train_qlora.py --model $BASE --data $D/tok_31b --out $RUN --pipeline 4 --attn qchunk --max-len $FIT \
+  train() { timeout $((1200 * 60 + 3600)) $PY $V/train_qlora.py --model $BASE --data $D/tok_31b --out $RUN --pipeline 4 --attn qchunk --max-len $FIT $SPL \
       --rank $RANK --alpha $ALPHA --lr 1e-4 --optim adamw --epochs 1 --grad-accum 4 --log-every 1 --save-every 10 \
       --fit-probe --fit-ladder $FIT,$((FIT - 1024)) --deadline-min 1200 "$@" >> $RUN/train.log 2>&1; }
   train; log "training exit $?"
