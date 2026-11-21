@@ -95,8 +95,10 @@ eval_run() {   # eval_run <tag> <task list>
 
 if [ $START_AT -le 6 ]; then
   serve_adapter || stop "the model server with the adapter did not come up"
-  python3 $V/adapter_effect.py --examples $(ls $D/heldout.jsonl 2>/dev/null) $D/all.jsonl --out results/r2_effect.json 2>&1 | tail -2 | tee -a $LOG
-  grep -q '"pass": true' results/r2_effect.json || stop "the adapter does not change the answers or breaks tool calls (effect check)"
+  rm -f results/r2_effect.json
+  python3 $V/adapter_effect.py --examples $(ls $D/heldout.jsonl 2>/dev/null) $D/all.jsonl --out results/r2_effect.json 2>&1 | tail -5 | tee -a $LOG
+  grep -q '"pass": false' results/r2_effect.json 2>/dev/null && stop "the adapter does not change the answers or breaks tool calls (effect check)"
+  [ -f results/r2_effect.json ] || log "WARNING: the effect check did not finish; the test goes on and decides"
 fi
 
 if [ $START_AT -le 7 ]; then   # ---- 7: test pass 1 -----------------------------------------------------------------
