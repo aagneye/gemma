@@ -4,6 +4,10 @@
 # results is skipped, so the chain can be started again after a stop.
 #   [POSITION=A] [BOX_HOURS=40 | BOX_END=<epoch seconds>] [CHUNK=40] [WAIT_FOR=<tmux session>] bash r2_notes_chain.sh
 #   DRY=1 prints the chunks in order and runs nothing (own tmp folder; LOG=/tmp/x.log keeps the real log clean).
+#   Floor guard (Nov 21): when the box closes with fewer than MIN_CLEAN (62) clean examples in the train and rb2
+#   chunks' notes.md, the chain goes on chunk by chunk until the count is reached or EXTRA_HOURS (6) have passed.
+#   The plan's floor is 60 clean note runs in the builder's count (pilot C adds 8, the builder drops about 1 in 10);
+#   the approved box was 40 hours, the Nov 21 box is 30.
 # Groups, in this order (results/lists/r2_tk_<name>.txt; the plan: small fixes of both pools first):
 #   train      failed TRAIN tasks where the note comes on the recorded run, tasks 1-60 of the list
 #              (its 55 clean small fixes come first)                            (pool rebench)
@@ -29,6 +33,9 @@ ensure_server() {
   [ "$(MODEL=$MODEL bash ~/gemma4_vm/wait_vllm.sh | head -1)" = READY ] && up
 }
 END=${BOX_END:-$(( $(date +%s) + BOX * 3600 ))}          # BOX_END=<epoch seconds> keeps the box's end after a restart
+MINC=${MIN_CLEAN:-62}; XH=${EXTRA_HOURS:-6}
+clean() { cat results/replica/r2_tk_train_*/notes.md results/replica/r2_tk_rb2_*/notes.md 2>/dev/null |
+          grep -o 'Clean examples: [0-9]*' | awk '{s += $3} END {print s + 0}'; }
 log "note runs start: position $POS, box until $(date -u -d @$END), chunks of $CHUNK"
 T=tmp/r2; [ -n "${DRY:-}" ] && T=tmp/r2dry; mkdir -p $T
 # group = name, pool, hints file, first and last task of the list (the list is r2_tk_<name without _big>.txt)
@@ -38,7 +45,13 @@ for g in "train rebench hints_train 1 60" "dev rebench hints_train" "rb2_clean r
   rm -f $T/chunk_${name}_[0-9]*
   grep -v '^#' results/lists/r2_tk_${name%_big}.txt | sed -n "${from},${to}p" | split -l $CHUNK -d - $T/chunk_${name}_
   for c in $T/chunk_${name}_[0-9]*; do
-    [ $(date +%s) -lt $END ] || { log "the time box is closed: stop before $c"; break 2; }
+    if [ $(date +%s) -ge $END ]; then
+      n=$(clean)
+      if [ $n -ge $MINC ] || [ $(date +%s) -ge $(( END + XH * 3600 )) ]; then
+        log "the time box is closed ($n clean examples in the chunks): stop before $c"; break 2
+      fi
+      log "the time box is closed with $n clean examples (under $MINC): one more chunk, at most $XH hours over"
+    fi
     tag=r2_tk_${name}_${c##*_}
     [ -f results/replica/$tag/results.csv ] && { log "$tag has results: skipped"; continue; }
     [ -n "${DRY:-}" ] && { echo "$tag $pool $hints $(wc -l < $c) tasks, first $(head -1 $c)"; continue; }
