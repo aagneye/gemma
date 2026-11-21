@@ -2,7 +2,7 @@
 # Round-2 note runs in order, inside a fixed time box (Nov 19, plan step 3). Every group is cut into chunks; the box
 # is checked before each chunk, so the chain ends at most one chunk after the box closes. A chunk that already has
 # results is skipped, so the chain can be started again after a stop.
-#   [POSITION=A] [BOX_HOURS=40] [CHUNK=40] [WAIT_FOR=<tmux session>] bash r2_notes_chain.sh
+#   [POSITION=A] [BOX_HOURS=40 | BOX_END=<epoch seconds>] [CHUNK=40] [WAIT_FOR=<tmux session>] bash r2_notes_chain.sh
 # Groups, in this order (results/lists/r2_tk_<name>.txt):
 #   train      failed TRAIN tasks where the note comes on the recorded run      (pool rebench)
 #   rb2_clean  rebench2 tasks with a clean small fix, never run before          (pool rebench2)
@@ -23,8 +23,8 @@ ensure_server() {
   free || { log "a GPU is held by another job: the chain stops (nothing of theirs was touched)"; return 1; }
   [ "$(MODEL=$MODEL bash ~/gemma4_vm/wait_vllm.sh | head -1)" = READY ] && up
 }
-END=$(( $(date +%s) + BOX * 3600 ))
-log "note runs start: position $POS, box $BOX h (until $(date -u -d @$END)), chunks of $CHUNK"
+END=${BOX_END:-$(( $(date +%s) + BOX * 3600 ))}          # BOX_END=<epoch seconds> keeps the box's end after a restart
+log "note runs start: position $POS, box until $(date -u -d @$END), chunks of $CHUNK"
 mkdir -p tmp/r2
 for g in "train rebench hints_train" "rb2_clean rebench2 hints_rb2" "dev rebench hints_train" "rb2_rest rebench2 hints_rb2"; do
   set -- $g; name=$1; pool=$2; hints=datasets/r2/$3.jsonl
