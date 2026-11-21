@@ -733,3 +733,12 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Trainer fixed before its unattended day:** a restart now continues the pass where the checkpoint was written (it started again at the first row); a row that does not fit is left out and logged (it killed the run).
 - **GPU test armed for the first break of the note runs** (about 14:45 UTC, `r2_gpu_smoke.sh`): fit per length and split, 4 updates with a full-length row and a row that cannot fit, a restart, the held-out check on 3 rows. It restarts the note runs with the same box end. Cost: about 45 minutes of the box.
 - **Schedule (UTC):** note runs until Nov 22 about 19:00–21:00; training until Nov 23 about 17:00; test pass 1 until Nov 24 about 12:00; pass 2 and the verdict Nov 25 morning; first possible adapter slot Nov 26 00:10.
+
+## 2026-11-21 15:20 UTC — leaderboard census: the top of the board is a best-day draw; Budget-Fit keeps the slot
+- **User (15:00 UTC):** asked to push the latest set to Kaggle and whether we have an improvement. No bundle beats Budget-Fit on EVAL, so nothing new went in; the user chose "Yes, keep it" (Budget-Fit V5 stays in the daily slot until round 2 is judged).
+- **Whole public board (note 19):** 6,343 teams, 56,174 submissions, nobody above 14 solved of 58 (0.24) since Oct 22. 16 teams at 14, 125 at 13, 604 at 12. We: rank 718, best 12 (Nov 19), usual run 9.6 over 16 Budget-Fit runs.
+- **The best score grows with the number of runs:** teams with 1–4 submissions: 2% at 0.20 or more; with 30 and more: 51%. Half of the 16 top teams have 30 or more submissions.
+- **Public notebooks since Nov 18:** none reports repeated runs above Budget-Fit; two report the same spread (0.13–0.20) and lower scores for each own change. One of them ships our exact file set (`c9829b6a`).
+- **Consequence:** with Budget-Fit, about 1 in 10 for one run of 0.22 and about 1 in 100 for one run of 0.24 in the ten runs left. A pass of round 2 (+3 of 77, +7%) would be under one task on a usual Kaggle run: an edge for the final ranking, not a likely 0.24.
+- **Note runs, first chunk:** 13 of 20 done at 15:10 UTC, 6 solved; about 5.3 tasks per hour against the 9 of the schedule. At this pace the 30-hour box holds about 155 runs, close to the floor of 60 clean note runs. To be checked when the chunk ends.
+- **Kaggle:** Nov 21 (58642667) still scoring at 14:40 UTC.
