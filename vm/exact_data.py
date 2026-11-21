@@ -48,8 +48,7 @@ MODEL_DIR = "models/gemma-4-31b-it-qat-w4a16-ct"       # the SERVING model's tok
 ROOT = os.environ.get("GEMMA_ROOT", "/mnt/biohub/kdata/gemma4")
 FREE = ("submit_patch", "get_status")
 TRACE_THOUGHT_END = "\n\n"                             # the most common ending of real thinking (51 of 137 pilot steps)
-LEAK_RX = re.compile(r"private note|this note\b|the note\b|was provided|provided fix|given fix|i was told|as instructed"
-                     r"|i have seen enough|correct fix is exactly|next step: state|copying each .replace. text", re.I)
+from note_report import LEAK_RX                        # one leak rule for the report and for the builder
 
 
 # ---- rendering ----------------------------------------------------------------------------------------------------

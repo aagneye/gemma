@@ -22,7 +22,17 @@ import autopsy as A
 ROOT = os.environ.get("GEMMA_ROOT", "/mnt/biohub/kdata/gemma4")
 # Words that show the model is talking about the note: the approved list for the note in a tool result or in the task
 # text, plus verbatim pieces of the first-person form (position C), which would be copies of text the example lacks.
-LEAK_RX = re.compile(r"private note|this note\b|the note\b|was provided|provided fix|given fix|i was told|as instructed"
+# Nov 21: a bare "was provided" dropped a run for "a TypeError when `iat` was provided as a string" (pilot C, pyjwt_847).
+# It now counts only when a fix, patch, hint or the like is what was provided or given ("the fix was provided", "the
+# fix I was given", "the provided solution"). A looser form ("provided to me") dropped a run that spoke of the harness's
+# own summary after the history was shortened, so the fix word must stand right next to it.
+# exact_data.py imports this rule, so the report and the builder cannot differ.
+_SUBJ = r"(?:fix|fixes|patch|solution|change|changes|diff|answer|hint|replacement|blocks?)"
+_BE = r"(?:was|were|is|are|has been|have been|had been)"
+LEAK_RX = re.compile(r"private note|this note\b|the note\b|i was told|as instructed"
+                     rf"|\b{_SUBJ} (?:(?:that|which) )?(?:(?:i|we) {_BE} |{_BE} )?(?:provided|supplied)\b"
+                     rf"|\b{_SUBJ} (?:(?:that|which) )?(?:(?:i|we) {_BE} |{_BE} )given\b|\b{_SUBJ} given to (?:me|us)\b"
+                     rf"|\b(?:provided|given|supplied) {_SUBJ}\b|\bi was given (?:the|a|this) {_SUBJ}\b"
                      r"|i have seen enough|correct fix is exactly|next step: state|copying each .replace. text", re.I)
 norm = lambda s: "\n".join(l.strip() for l in str(s or "").split("\n") if l.strip())
 
