@@ -752,3 +752,10 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Both changes were installed while the GPU test held the cards** (no note run was active) and checked with the new dry run (`DRY=1`): chunk order, and the four box cases.
 - **Not changed: 4 tasks at a time.** The plain server gives 32 tokens/s to 1 request and 85 to 4; 6 at a time would add about 15–20% and needs a new clock scale that has not been validated.
 - **GPU test, started 16:01 UTC:** 15,360 tokens does not fit with either split (the last card fails at 15.0–15.1 GB; the run dies in the backward pass there before the other cards reach their peak). 14,336 and lower are being tried.
+
+## 2026-11-21 16:40 UTC — GPU test passed at 14,336 tokens; a silent loss of updates found and closed
+- **GPU test (16:01–16:30 UTC, 29 minutes; note 18, section 10):** 15,360 tokens does not fit with any split; **14,336 fits with layers 9/18/18/15** (peak 13.2–14.5 GB with the optimizer's state, 19.1 ms per token). Four updates with checkpoints, the row that cannot fit left out, the restart at the right row and the held-out check all ran. `fit_try.txt` = `14336:9,18,18,15 13312 12288`.
+- **Lost updates:** the full-length row's update had `grad_norm: NaN`. The fp16 loss scaling overflowed, so the step was skipped and the scale halved. Round 1 lost updates 5, 10, 16 and 17 of 41 this way (10% of its rows) and it was never noticed. The trainer now starts at the scale round 1 ended on (2^9 at 4 rows per update, `--init-scale`) and logs `loss_scale` (commit 0c241db). Compiled and option-checked; not run on the GPUs.
+- **Running again since 16:30 UTC:** `r2notes` (chunk `train_01`, new order, floor guard), `r2chain` (waits; reads `fit_try.txt`); the server answered at 16:37.
+- **Training budget:** at 19.1 ms per token, 19 hours hold 3.57M tokens. At 14,336 the pilots' note examples keep 61.5k learned tokens (12,288: 45.6k).
+- **Schedule unchanged:** box until Nov 22 18:42 UTC, up to 6 hours more only if the floor guard is needed.

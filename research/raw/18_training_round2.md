@@ -206,8 +206,10 @@ correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore
 
 ## 9. The long run and the chain (started Nov 21, 12:42 UTC)
 - **Note runs:** tmux `r2notes`: `POSITION=C BOX_HOURS=30 CHUNK=20 bash r2_notes_chain.sh`; the box closes Nov 22 18:42 UTC.
-  Order: failed TRAIN tasks (84), rebench2 clean fixes (156), dev tasks for the held-out check (14), other rebench2
-  tasks (66). The 12 pilot tasks are in none of these lists; pilot C's runs are added as examples (`EXTRA_TAGS`).
+  Order since Nov 21 16:10 UTC (the plan's "small fixes of both pools first"): failed TRAIN tasks 1–60 (its 55 small
+  fixes come first), dev tasks for the held-out check (14), rebench2 clean fixes (156), TRAIN tasks 61–84 (the larger
+  fixes, group `train_big`), other rebench2 tasks (66). The 12 pilot tasks are in none of these lists; pilot C's runs
+  are added as examples (`EXTRA_TAGS`).
 - **Chain:** tmux `r2chain`: `WAIT_FOR=r2notes EXTRA_TAGS="r2_pilot_train_c r2_pilot_rb2_c" bash chain_r2.sh`.
 
 **How long an example may be decides how much is learned** (24 note examples of both pilots + 101 own wins, CPU):
@@ -223,7 +225,7 @@ correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore
 - 15,360 holds almost everything: +55% learned note tokens and +66% learned own tokens over round 1's 12,288.
 - **Memory:** round 1 (rank 32, 12,288 tokens, layers per card 8/18/17/17) peaked at 11.9 / 12.8 / 12.6 / 13.7 GB on
   16 GB cards: the last card is the limit and grows 0.57 GB per 1,024 tokens. Rank 16 saves about 0.5 GB per card.
-  Estimate: 15,360 is on the edge with the trainer's own split and comfortable with 9/18/18/15.
+  Estimate: 15,360 is on the edge with the trainer's own split and comfortable with 9/18/18/15 (wrong: section 10).
   The split is sized from `--max-len`, so the fit test now runs one process per length (`chain_r2.sh`, `FIT_TRY`).
 - **Time:** training costs about 12.8 ms + 0.39 ms per 1,000 tokens of row length, per token (round 1: 16.1 at 8k,
   17.7 at 12k), so about 18–19 ms per token here. The plan's 20-hour stop holds about 3.9M tokens. With about 100
@@ -247,3 +249,53 @@ correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore
   length and split, a 4-update training with a full-length row and a row that cannot fit, a restart from a checkpoint,
   and `heldout_loss.py` on three rows. It restarts the note runs with the same box end and re-queues the chain. Cost:
   about 45 minutes of the box. Results in section 10.
+
+## 10. First chunk and the GPU test (Nov 21, 16:01–16:30 UTC)
+
+**First chunk of the note runs** (`r2_tk_train_00`, 20 failed TRAIN tasks with small fixes, 12:42–16:01 UTC):
+
+| | Runs |
+|---|---|
+| Note given | 18 (14 at the first change, 4 at the deadline) |
+| Real tests pass | 8 |
+| Clean examples | 8 (no leak words; 1 bare-copy first thinking; 1 without a check after the last edit) |
+| No note | 2 (changed a file before the fix's lines were on screen) |
+
+- **Pace: 6.0 tasks an hour**, not the 9 of the schedule: a task uses 4.3 Kaggle-minutes on average, 39 real minutes at
+  the ×9 clock, 4 at a time. The box will hold about 180 runs. At 40% clean: about 60 clean note runs plus pilot C's 8.
+- **Order put back to the plan** (small fixes of both pools first; section 9) and a **floor guard** in
+  `r2_notes_chain.sh`: when the box closes with fewer than 62 clean examples in the train and rb2 chunks, the chain goes
+  on chunk by chunk, 6 hours over at most. The floor rule (60 clean note runs from 45 tasks) is unchanged; the approved
+  box was 40 hours. Both were checked with the chain's dry run (`DRY=1`).
+- **Not changed: 4 tasks at a time.** The server gives 32 tokens/s to 1 request and 85 to 4; 6 at a time would add
+  about 15–20% and needs a new clock scale that has not been validated.
+
+**GPU test** (29 minutes of the box; `logs/r2_smoke.log`):
+
+| Step | What ran | Result |
+|---|---|---|
+| B fit | one process per length and split, one forward and backward at full length | 15,360 does not fit (9/18/18/15: the last card fails at 14.95 GB; 8/18/17/17: at 15.12 GB). **14,336 fits with 9/18/18/15**: peak 13.2 / 13.9 / 13.9 / 14.3 GB, reserved 14.2 / 15.4 / 15.4 / 15.2 GB; 19.1 ms per token |
+| C training | 4 updates of one row each (4,767; 14,296 = full length; 4,424; 32,291 cannot fit; 6,615 tokens), a checkpoint after each | PASS: final adapter, 4 checkpoints, the 32,291 row left out and logged, the full row ran with the optimizer's state (peak 13.4 / 14.2 / 14.2 / 14.5 GB) |
+| C2 restart | from checkpoint 3 | PASS: "skipping the first 3 rows", went on at update 4 |
+| D held-out check | `heldout_loss.py` on 3 rows: base, final adapter, checkpoint 1 | PASS as a tool: step loss and a SANITY line (base 0.393, final 0.299). Its verdict on a 4-update adapter means nothing |
+
+- `datasets/r2/fit_try.txt` = `14336:9,18,18,15 13312 12288`; the chain probes again before it trains.
+- 14,336 keeps 23 of the pilots' 24 note examples and 61.5k learned note tokens (15,360: 70.6k; 12,288: 45.6k).
+- At 19.1 ms per token the 19-hour budget is 3.57M tokens.
+- Section 9's memory estimate was wrong for 15,360: both failed probes died in the backward pass on the last card,
+  before the other cards reached their own peak. At 14,336 every card peaks at 13.2–14.3 GB, so the whole model needs
+  about 55 of the 60 GB and no split makes room for 15,360.
+
+**Found in the test log: an update lost without a word**
+- The update of the full-length row has `grad_norm: NaN`. The T4s train in fp16 with a scaled loss (GradScaler, start
+  2^14). When the scaled gradients overflow, the optimizer step is skipped and the scale is halved; it is not raised
+  again in a run this short.
+- Round 1's log shows the same and nobody saw it: updates 5, 10, 16 and 17 of 41 were thrown away (32 of 328 rows, 10%)
+  while the scale fell from 2^14 to 2^10; none after that. The counter `skipped_nonfinite` counts losses, not gradients.
+- Per row the scale that held was 2^10 / 8 rows = 128. Round 2 has 4 rows per update, so the trainer now starts at 2^9
+  (`--init-scale`, the default) and writes `loss_scale` into every log line. If the longer rows need less, it still
+  halves by itself, at the cost of one update of about 100 each time.
+- Not run on the GPUs (they went back to the note runs): compiled, `--help` shows the option, the scaler builds with
+  512. The chain's fit probe ends before this line; the first log line of the training shows it.
+- Also seen: the first update of a run has learning rate 0 (the warm-up starts at zero), so checkpoint 1 equals the
+  base model (held-out loss ×1.000). In the real run that is 4 rows of about 400. Left as it is.

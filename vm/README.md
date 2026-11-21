@@ -207,11 +207,16 @@ Train the 31B at useful context; serve the QAT w4a16 checkpoints with vLLM (need
   - Traces strip the trailing newlines of thinking; the relay's journal keeps them. Build examples from journals where they exist.
   - A question that needs the user's answer goes into the next-step box. Two question dialogs were lost when the session ended (Nov 19).
 - **Long note runs (Nov 21):** `tmux new -d -s r2notes "POSITION=C BOX_HOURS=30 CHUNK=20 bash ~/gemma4_vm/r2_notes_chain.sh"`. After a stop, start it again with `BOX_END=<epoch seconds>` to keep the box's end; chunks with results are skipped.
-- **GPU test of the training steps** (about 45 minutes): `BOX_END=<epoch> bash r2_gpu_smoke.sh` stops the note chains and the server, runs the fit test per length and split, a 4-update training with a restart, and the held-out check, then starts the note runs and the chain again. `r2_smoke_trigger.sh` starts it at the next finished chunk. Token sets for it: `smoke_rows.py`.
-  - It writes the entry that passed to `datasets/r2/fit_try.txt` ("15360:9,18,18,15 14336 13312 12288"); `chain_r2.sh` reads its fit list from there unless `FIT_TRY` is set.
+- **GPU test of the training steps** (29 minutes on Nov 21): `BOX_END=<epoch> bash r2_gpu_smoke.sh` stops the note chains and the server, runs the fit test per length and split, a 4-update training with a restart, and the held-out check, then starts the note runs and the chain again. `r2_smoke_trigger.sh` starts it at the next finished chunk. Token sets for it: `smoke_rows.py`.
+  - It writes the entry that passed to `datasets/r2/fit_try.txt` (Nov 21: `14336:9,18,18,15 13312 12288`; 15,360 does not fit with any split); `chain_r2.sh` reads its fit list from there unless `FIT_TRY` is set.
+- **Note chain order and floor guard (Nov 21):** `DRY=1 LOG=/tmp/x.log POSITION=C BOX_END=<epoch> CHUNK=20 bash r2_notes_chain.sh` prints the chunks in order and runs nothing. When the box closes with fewer than `MIN_CLEAN` (62) clean examples, the chain goes on for at most `EXTRA_HOURS` (6).
 - **Pitfalls (Nov 21):**
   - The trainer sizes its layer split from `--max-len`. A fit test at one length says nothing about another length's split: run one process per length (`--fit-ladder N --probe-only`).
   - The fit test runs before the optimizer holds its state (about 0.3 GB more per card at rank 16). Only a real update followed by a full-length row shows that a length trains.
   - Training time is tokens (about 18–19 ms each at these lengths). Size the set with `exact_data.py tokenize --token-budget`; the trainer's `--deadline-min` would cut the end of the pass and of the learning-rate schedule.
   - One leak rule: `note_report.LEAK_RX` (the builder imports it). A bare "was provided" matches ordinary bug descriptions.
   - `python` does not exist on the Windows side: run Python checks on the VM.
+  - **An update can be lost without a word.** On the T4s the trainer scales the loss for fp16 (GradScaler). When the scaled gradients overflow, the log line shows `grad_norm: NaN`, the optimizer step is skipped and the scale is halved for the rest of the run. Round 1 lost 4 of 41 updates this way. The trainer now starts at 2^9 (`--init-scale`) and logs `loss_scale`; count the NaN lines after every training.
+  - The first update of a run has learning rate 0 (the warm-up starts at zero), so the first checkpoint equals the base model.
+  - `pgrep -f X` inside an ssh command also matches the remote shell when X stands anywhere in the command's text, a file name included. Check for a running process in a command of its own.
+  - The leaderboard file's `LastSubmissionDate` is a team's last scored submission, not its best one.
