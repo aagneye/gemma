@@ -228,7 +228,10 @@ correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore
 - **Time:** training costs about 12.8 ms + 0.39 ms per 1,000 tokens of row length, per token (round 1: 16.1 at 8k,
   17.7 at 12k), so about 18–19 ms per token here. The plan's 20-hour stop holds about 3.9M tokens. With about 100
   clean note runs the set would be about 4.4M. The tokenizer now takes a token budget (`--token-budget`, sized for 19
-  hours from the fit test's speed) and leaves out own wins, the longest first; note rows are never left out.
+  hours from the fit test's speed). What gives way, the longest first: own wins (the model already does these; round 1
+  trained on them alone and tied), then the second copies of first-change note rows. Every note row stays once.
+  Sizes from the pilots at 15,360: a first-change run costs about 19k tokens per copy, a deadline run about 20k, an
+  own win about 12.5k. So 130 clean runs would be about 2.6M once, 3.9M with the second copies, before any own win.
 - **Trainer fixes before it runs for a day unattended** (`train_qlora.py`):
   - A restart from a checkpoint started the pass again at its first row, so the first rows were seen twice and the
     last never. It now skips the rows trained before the restart (same seed, same shuffle).
