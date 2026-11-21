@@ -209,10 +209,10 @@ class ChunkedLM(torch.nn.Module):
         return tot / n, n.detach()
 
 
-def fit_probe(lm, ds, max_len, in_dev, dt, devs):
+def fit_probe(lm, ds, max_len, in_dev, dt, devs, ladder=None):
     """One forward+backward on a max_len sequence cut from the longest windows: peak memory per GPU and ms/token at the
-    full context, before any optimizer step. On OOM it retries at 3/4 and 1/2 of the length. Returns (records, longest
-    length that fit, 0 if none)."""
+    full context, before any optimizer step. On OOM it retries at 3/4 and 1/2 of the length, or at the next length of
+    `ladder`. Returns (records, longest length that fit, 0 if none)."""
     src = sorted(ds.rows, key=lambda r: -r["n"]); assert src, "no windows to probe with"
     ids, lab = [], []
     while len(ids) < max_len:
@@ -220,7 +220,7 @@ def fit_probe(lm, ds, max_len, in_dev, dt, devs):
             ids += r["input_ids"]; lab += r["labels"]
             if len(ids) >= max_len: break
     recs = []
-    for n in (max_len, max_len * 3 // 4, max_len // 2):
+    for n in (ladder or (max_len, max_len * 3 // 4, max_len // 2)):
         x, y = torch.tensor([ids[:n]], device=in_dev), torch.tensor([lab[:n]], device=in_dev)
         for d in devs: torch.cuda.reset_peak_memory_stats(d); torch.cuda.synchronize(d)
         t = time.time(); oom = False; loss = None
@@ -260,6 +260,10 @@ def main():
     ap.add_argument("--fit-probe", action="store_true", help="before training, one forward+backward at --max-len (peak memory per GPU, ms/token); "
                                                              "on OOM retry shorter and train only on the windows that fit")
     ap.add_argument("--deadline-min", type=float, default=0, help="stop and save the adapter after this many minutes since start (0 = none)")
+    ap.add_argument("--fit-ladder", default=None, help="lengths the fit probe tries in order, e.g. 15360,14336,13312,12288 "
+                                                       "(default: --max-len, 3/4 and 1/2 of it)")
+    ap.add_argument("--probe-only", action="store_true", help="run the fit probe, print {\"fit\": <longest length that fits>} and exit "
+                                                              "(round 2: the examples are then cut to that length before training)")
     a = ap.parse_args()
     t_start = time.time()
     os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -289,11 +293,14 @@ def main():
     ds = WindowDS(a.data, a.max_len)
     if a.fit_probe:
         model.train()                                      # gradient checkpointing is only active in train mode
-        recs, fit = fit_probe(lm, ds, a.max_len, in_dev, dt, devs)
+        ladder = [int(x) for x in a.fit_ladder.split(",")] if a.fit_ladder else None
+        recs, fit = fit_probe(lm, ds, a.max_len, in_dev, dt, devs, ladder)
         for rec in recs:
             say(json.dumps(rec))
             if is_main: log.write(json.dumps(rec) + "\n"); log.flush()
-        assert fit, "fit probe: even max-len/2 runs out of memory"
+        if a.probe_only:
+            say(json.dumps({"fit": fit})); return
+        assert fit, "fit probe: no length of the probe fits the cards"
         if fit < a.max_len:
             ds.rows = [r for r in ds.rows if r["n"] <= fit]; say(f"fit probe: training only on windows <= {fit} tokens ({len(ds)} left)")
     sampler = torch.utils.data.distributed.DistributedSampler(ds, shuffle=True, seed=a.seed) if world > 1 else None
