@@ -331,19 +331,37 @@ def main():
         opt.load_state_dict(st["opt"]); sched.load_state_dict(st["sched"]); scaler.load_state_dict(st["scaler"])
         step = st["step"]; ep = st["epoch"]
         say(f"resumed trainer state at step {step}, epoch {ep}")
+    # A restart draws the same shuffle as the run that wrote the checkpoint (same seed, same rows), so the rows that run
+    # already trained on are skipped; without this a restarted single pass would see its first rows twice and its last
+    # rows never. Exact for the first pass only (a later pass draws a new shuffle).
+    skip = (step * a.grad_accum) % max(1, len(dl)) if (step and world == 1) else 0
+    if skip: say(f"resume: skipping the first {skip} rows of the pass (trained before the restart)")
+    oom_rows = 0; step0 = step
     while step < total:
         if sampler: sampler.set_epoch(ep)
         for batch in dl:
+            if skip: skip -= 1; continue
             ids = batch["input_ids"].to(in_dev, non_blocking=True); lab = batch["labels"].to(in_dev, non_blocking=True)
             sync_ctx = ddp.no_sync() if (ddp is not None and (micro + 1) % a.grad_accum != 0) else torch.autocast("cpu", enabled=False)
-            with sync_ctx:
-                with torch.autocast("cuda", dtype=dt):
-                    loss, n_sup = fwd(ids, lab)
-                # Never skip backward on one rank alone (that desynchronises DDP collectives). A non-finite loss is
-                # back-propagated as-is: DDP averages it into every rank's grads, GradScaler (fp16) sees inf/nan on all
-                # ranks and skips that optimizer step everywhere; for bf16 we zero the step below.
-                if not torch.isfinite(loss): skipped += 1
-                scaler.scale(loss / a.grad_accum).backward()
+            oom = False
+            try:
+                with sync_ctx:
+                    with torch.autocast("cuda", dtype=dt):
+                        loss, n_sup = fwd(ids, lab)
+                    # Never skip backward on one rank alone (that desynchronises DDP collectives). A non-finite loss is
+                    # back-propagated as-is: DDP averages it into every rank's grads, GradScaler (fp16) sees inf/nan on all
+                    # ranks and skips that optimizer step everywhere; for bf16 we zero the step below.
+                    if not torch.isfinite(loss): skipped += 1
+                    scaler.scale(loss / a.grad_accum).backward()
+            except torch.OutOfMemoryError:
+                if world > 1: raise                        # DDP: one rank must never skip alone
+                oom = True
+            if oom:   # one process (--pipeline): a row that does not fit is left out, the update goes on with the other rows
+                oom_rows += 1; loss = n_sup = None; gc.collect(); torch.cuda.empty_cache()
+                say(json.dumps({"oom_row": {"seq_len": int(ids.shape[1]), "after_micro": micro, "rows_left_out": oom_rows}}))
+                if oom_rows > 20 and oom_rows > micro // 4:       # not a few stray long rows: something else holds the cards
+                    raise RuntimeError(f"{oom_rows} rows did not fit the cards ({micro} did): stopping")
+                continue
             micro += 1; tokens += ids.shape[1]; sup += int(n_sup); run_loss += float(loss.detach()) if torch.isfinite(loss) else 0.0; run_n += 1
             if is_main and micro == 1:
                 assert a.attn != "qchunk" or QCHUNK["calls"] > 0, "qchunk attention was never called"
@@ -370,8 +388,8 @@ def main():
                     el = time.time() - t0
                     rec = {"step": step, "epoch": round(step / steps_per_epoch, 3), "loss": round(run_loss / max(1, run_n), 4), "grad_norm": round(float(gn), 3),
                            "lr": sched.get_last_lr()[0], "tok_s_per_rank": round(tokens / el), "tok_s_total": round(tokens * world / el),
-                           "sup_tokens": sup * world, "skipped_nonfinite": skipped, "elapsed_min": round(el / 60, 1),
-                           "eta_min": round((el / step) * (total - step) / 60, 1), "mem_gb": peak()}
+                           "sup_tokens": sup * world, "skipped_nonfinite": skipped, "oom_rows": oom_rows, "elapsed_min": round(el / 60, 1),
+                           "eta_min": round((el / max(1, step - step0)) * (total - step) / 60, 1), "mem_gb": peak()}
                     if a.pipeline > 1: rec["mem_reserved_gb"] = peak(torch.cuda.max_memory_reserved)
                     say(json.dumps(rec)); log.write(json.dumps(rec) + "\n"); log.flush(); run_loss = 0.0; run_n = 0
                 if is_main and step % a.save_every == 0:
@@ -390,7 +408,8 @@ def main():
         el = time.time() - t0
         rec = {"summary": {"steps": step, "micro_batches": micro, "tokens": tokens * world, "sup_tokens": sup * world, "train_min": round(el / 60, 1),
                            "tok_s_total": round(tokens * world / el), "ms_per_token": round(1000 * el / max(1, tokens * world), 2), "mem_gb": peak(),
-                           "mem_reserved_gb": peak(torch.cuda.max_memory_reserved), "skipped_nonfinite": skipped, "total_min": round((time.time() - t_start) / 60, 1)}}
+                           "mem_reserved_gb": peak(torch.cuda.max_memory_reserved), "skipped_nonfinite": skipped, "oom_rows": oom_rows,
+                           "total_min": round((time.time() - t_start) / 60, 1)}}
         say(json.dumps(rec)); log.write(json.dumps(rec) + "\n"); log.flush()
         model.save_pretrained(f"{a.out}/final"); tok.save_pretrained(f"{a.out}/final")
         say(f"saved -> {a.out}/final (PEFT dir; package with make_submission.py --bundle ... --adapter {a.out}/final). skipped_nonfinite={skipped}")
