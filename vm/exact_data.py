@@ -16,6 +16,7 @@ the model's replies. Nothing is summarised, capped or rewritten.
                    held-out set: --notes r2_tk_dev_00 --only results/lists/dev48.txt --out datasets/r2/heldout.jsonl (no --own)
   tokenize       examples -> train.parquet (input_ids, labels, n, fix_labels, kind, iid) for train_qlora.py:
                    .venv/bin/python exact_data.py tokenize datasets/r2/all.jsonl --max-len 14336 --out datasets/r2/tok_31b
+                   held-out rows: ... tokenize datasets/r2/heldout.jsonl --first-step-only --w-first 1 --out datasets/r2/tok_heldout
 
 What an example is (build):
   * A run is cut into stretches: a new stretch starts when the harness shortened the history (ADK compaction) or added a
@@ -383,7 +384,8 @@ def cmd_tokenize(a):
         fit = [(b, e) for b, e in spans if e <= a.max_len]
         if not fit or fit[0] != spans[0]:
             stats["dropped: the first learned step does not fit"] += 1; per_kind[s["kind"]]["too long"] += 1; lost.append((s["iid"], s["kind"], f"too long ({spans[0][1]} tokens to the first learned step)")); continue
-        if len(fit) < len(spans): stats["cut after the last learned step that fits"] += 1
+        if a.first_step_only: fit = fit[:1]                    # held-out rows: the prompt at the note and the first step after it
+        elif len(fit) < len(spans): stats["cut after the last learned step that fits"] += 1
         end = fit[-1][1]; ids_ = full[:end]; labels = [-100] * end; fix = [-100] * end
         for b, e in fit: labels[b:e] = ids_[b:e]
         b0, e0 = fit[0]; c0, c1 = offs[b0][0], offs[e0 - 1][1]; step_text = text[c0:c1]
@@ -427,6 +429,7 @@ def main():
     p = sub.add_parser("tokenize"); p.add_argument("data"); p.add_argument("--out", required=True); p.add_argument("--max-len", type=int, default=14336)
     p.add_argument("--w-first", type=int, default=2); p.add_argument("--w-deadline", type=int, default=1); p.add_argument("--w-own", type=int, default=1)
     p.add_argument("--seed", type=int, default=0); p.add_argument("--model", default=MODEL_DIR)
+    p.add_argument("--first-step-only", action="store_true", help="keep each example up to its first learned step (held-out rows for heldout_loss.py)")
     a = ap.parse_args()
     ok = {"check-render": cmd_check_render, "check-journal": cmd_check_journal, "build": cmd_build, "tokenize": cmd_tokenize}[a.cmd](a)
     sys.exit(0 if ok else 1)
