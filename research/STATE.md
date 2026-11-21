@@ -715,3 +715,21 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Facts found while building:**
   - A reply's thinking keeps 0–4 trailing newlines in the next request; traces strip them. Examples rebuilt from traces (round 1's wins) get the most common ending and match the server's token counts, but not every token.
   - Gemma often writes its own check script as `test_*.py` in the workspace root. The harness calls such a name protected; the builder treats it as a scratch file, not as a test edit (round 1 dropped 53 runs for this).
+
+## 2026-11-21 13:05 UTC — note form C chosen; the 30-hour note runs and the chain are running
+- **Pilots on the same 12 tasks** (details: note 18, section 8):
+
+  | | B: approved note at the end of the task text | C: the fix in Gemma's own thinking |
+  |---|---|---|
+  | Note given | 11 | 11 |
+  | Real tests pass | 10 | 9 |
+  | Gemma names the note | 4 runs (38 times "the private note") | 0 |
+  | Clean note runs (builder) | 7 | 8 (7 under the first leak rule) |
+- **Chosen: C** by the rule fixed before the pilots (more clean examples; a tie goes to C). C's thinking after the note reads as Gemma's own diagnosis followed by the edit.
+- **Leak rule corrected:** "was provided" dropped a run for "a `TypeError` when `iat` was provided as a string". It now counts only next to a fix word. Report and builder share one rule. Reversible until the examples are built.
+- **Running since 12:42 UTC:** tmux `r2notes` (position C, box until Nov 22 18:42 UTC, chunks of 20; order: 84 failed TRAIN, 156 rebench2 clean, 14 dev, 66 rebench2 rest) and `r2chain` (steps 4–8 behind it, with pilot C's runs as extra examples).
+- **Length decides the yield:** at 15,360 tokens the pilots' note examples keep 55% more learned tokens than at round 1's 12,288, the own wins 66% more. Round 1's memory numbers say 15,360 needs a different layer split over the cards (9/18/18/15); the fit test now runs one process per length and split.
+- **Time is the second limit:** about 18–19 ms per token, so the plan's 20-hour stop holds about 3.9M tokens; about 100 clean note runs would give 4.4M. The tokenizer takes a token budget and leaves out own wins first (longest first), never note rows.
+- **Trainer fixed before its unattended day:** a restart now continues the pass where the checkpoint was written (it started again at the first row); a row that does not fit is left out and logged (it killed the run).
+- **GPU test armed for the first break of the note runs** (about 14:45 UTC, `r2_gpu_smoke.sh`): fit per length and split, 4 updates with a full-length row and a row that cannot fit, a restart, the held-out check on 3 rows. It restarts the note runs with the same box end. Cost: about 45 minutes of the box.
+- **Schedule (UTC):** note runs until Nov 22 about 19:00–21:00; training until Nov 23 about 17:00; test pass 1 until Nov 24 about 12:00; pass 2 and the verdict Nov 25 morning; first possible adapter slot Nov 26 00:10.

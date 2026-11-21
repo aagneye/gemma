@@ -167,3 +167,80 @@ Next step: state in two or three sentences what is wrong in this code and what h
 
 Implemented in the relay; `takeover_check.py http` passes for C at a first change and at the deadline; the rendered
 prompt shows the plan inside the model's thought channel right before its last tool call.
+
+## 8. Pilots B and C (Nov 21): where the note goes
+Same 12 tasks, Budget-Fit V5 unchanged, both pools on the stretched clock. B = the approved note at the end of the task
+text (09:50–11:08 UTC). C = the fix inside Gemma's own latest thinking, first person (11:10–12:31 UTC; the user approved
+piloting it on Nov 21). Reports: `results/r2_pilot_b.md`, `results/r2_pilot_c.md` on the VM.
+
+| Measure | A (tool result, Nov 19) | B (task text) | C (own thinking) |
+|---|---|---|---|
+| Note given | 10 of 12 | 11 of 12 (7 first change, 4 deadline) | 11 of 12 (6 first change, 5 deadline) |
+| Real tests pass, noted runs | 7 | 10 | 9 |
+| First block applied within 2 steps | 4 | 7 (all 7 first-change cases; 0 of 4 at the deadline) | 6 (5 of 6 first-change cases; 1 of 5 at the deadline) |
+| Runs where Gemma names the note | 4 | 4 | **0** |
+| Clean note runs by the builder (`exact_data.py build`) | 3 | 7 | 7 under the first leak rule, **8** under the corrected one |
+| Examples / rows at 14,336 tokens | – | 11 / 17 | 13 / 19 |
+| Local token count = server count (`check-journal`) | 185 of 185 | 256 of 256 | 274 of 274 |
+
+- **B is read as outside advice.** In its 4 leaking runs Gemma wrote "the private note" 38 times, for example "maybe the
+  private note is the source of truth for what is expected for this task" and "if I follow the private note, I'm doing
+  what's expected for the evaluation". Runs that pass the word filter may still carry that stance.
+- **C reads as Gemma's own conclusion.** After the note it writes what is wrong and then edits ("The reproduction script
+  confirmed the `TypeError`. Now I will apply the fix. In `jwt/api_jwt.py`, in `_validate_iat`: the line `int(iat)`
+  should be `iat = int(iat)`"). No run names a note.
+- **At the deadline both forms are slow:** Gemma finishes its own exploring first (B: 0 of 4 within 2 steps, C: 1 of 5),
+  and applies the fix 6–9 steps later in about half of those runs. Those runs still give examples (deadline examples
+  count once, first-change examples twice).
+- **Chosen: C** (rule fixed before the pilots: more clean examples wins, a tie goes to C). The long run uses C.
+
+**Leak rule corrected (Nov 21).** The first rule dropped pyjwt_847 in pilot C for "a `TypeError` when `iat` was provided
+as a string". "provided / given / supplied" now counts only when a fix word (fix, patch, solution, change, diff, answer,
+hint, replacement, block) stands right next to it ("the fix was provided", "the fix I was given", "the provided
+solution"). A looser try ("provided to me") dropped nlpaug_169, where Gemma spoke of the harness's own summary after
+the history was shortened. The other words are unchanged. All 39 real hits in pilot B still match; pilot C has none.
+The report and the builder now share one rule (`note_report.LEAK_RX`).
+
+**Other drops looked at by hand:** precommithooks_944 in pilot C changed a test file and changed it back (dropped,
+correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore_577 in C did not apply the fix and failed.
+
+## 9. The long run and the chain (started Nov 21, 12:42 UTC)
+- **Note runs:** tmux `r2notes`: `POSITION=C BOX_HOURS=30 CHUNK=20 bash r2_notes_chain.sh`; the box closes Nov 22 18:42 UTC.
+  Order: failed TRAIN tasks (84), rebench2 clean fixes (156), dev tasks for the held-out check (14), other rebench2
+  tasks (66). The 12 pilot tasks are in none of these lists; pilot C's runs are added as examples (`EXTRA_TAGS`).
+- **Chain:** tmux `r2chain`: `WAIT_FOR=r2notes EXTRA_TAGS="r2_pilot_train_c r2_pilot_rb2_c" bash chain_r2.sh`.
+
+**How long an example may be decides how much is learned** (24 note examples of both pilots + 101 own wins, CPU):
+
+| Length limit | Note examples kept | Learned tokens, notes | Own wins kept | Learned tokens, own | All tokens |
+|---|---|---|---|---|---|
+| 12,288 (round 1) | 22 | 45.6k | 70 | 110.7k | 1.10M |
+| 13,312 | 23 | 53.8k | 79 | 138.4k | 1.30M |
+| 14,336 | 23 | 61.5k | 89 | 160.2k | 1.49M |
+| 15,360 | 24 | 70.6k | 98 | 183.3k | 1.70M |
+| 16,384 | 24 | 71.7k | 100 | 186.3k | 1.74M |
+
+- 15,360 holds almost everything: +55% learned note tokens and +66% learned own tokens over round 1's 12,288.
+- **Memory:** round 1 (rank 32, 12,288 tokens, layers per card 8/18/17/17) peaked at 11.9 / 12.8 / 12.6 / 13.7 GB on
+  16 GB cards: the last card is the limit and grows 0.57 GB per 1,024 tokens. Rank 16 saves about 0.5 GB per card.
+  Estimate: 15,360 is on the edge with the trainer's own split and comfortable with 9/18/18/15.
+  The split is sized from `--max-len`, so the fit test now runs one process per length (`chain_r2.sh`, `FIT_TRY`).
+- **Time:** training costs about 12.8 ms + 0.39 ms per 1,000 tokens of row length, per token (round 1: 16.1 at 8k,
+  17.7 at 12k), so about 18–19 ms per token here. The plan's 20-hour stop holds about 3.9M tokens. With about 100
+  clean note runs the set would be about 4.4M. The tokenizer now takes a token budget (`--token-budget`, sized for 19
+  hours from the fit test's speed) and leaves out own wins, the longest first; note rows are never left out.
+- **Trainer fixes before it runs for a day unattended** (`train_qlora.py`):
+  - A restart from a checkpoint started the pass again at its first row, so the first rows were seen twice and the
+    last never. It now skips the rows trained before the restart (same seed, same shuffle).
+  - A row that does not fit killed the run. In the one-process pipeline it is now left out and logged (`oom_row`).
+- **The answer-change check could stop a good round** (`adapter_effect.py`, found by reading it against the examples):
+  it drew 20 prompts from all examples and compared tool calls only. About 4 in 10 examples are own wins, where the
+  adapter is taught the base model's own answer, so an equal tool call is the wanted result; a working adapter could
+  score under 15 of 20. Now: note prompts first, the whole answer is compared (thinking and call), the base model is
+  asked twice on 5 prompts to show how repeatable temperature 0 is, and tool-call validity is judged against the base
+  model's (give or take one, and at least 9 in 10). The rule "15 of 20 answers differ" is unchanged. A crash of the
+  check no longer stops the chain (only its "fail" does); the test on the EVAL tasks decides either way.
+- **GPU test at the first break of the note runs** (`r2_gpu_smoke.sh`, armed by `r2_smoke_trigger.sh`): fit test per
+  length and split, a 4-update training with a full-length row and a row that cannot fit, a restart from a checkpoint,
+  and `heldout_loss.py` on three rows. It restarts the note runs with the same box end and re-queues the chain. Cost:
+  about 45 minutes of the box. Results in section 10.
