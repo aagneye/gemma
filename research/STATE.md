@@ -742,3 +742,13 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Consequence:** with Budget-Fit, about 1 in 10 for one run of 0.22 and about 1 in 100 for one run of 0.24 in the ten runs left. A pass of round 2 (+3 of 77, +7%) would be under one task on a usual Kaggle run: an edge for the final ranking, not a likely 0.24.
 - **Note runs, first chunk:** 13 of 20 done at 15:10 UTC, 6 solved; about 5.3 tasks per hour against the 9 of the schedule. At this pace the 30-hour box holds about 155 runs, close to the floor of 60 clean note runs. To be checked when the chunk ends.
 - **Kaggle:** Nov 21 (58642667) still scoring at 14:40 UTC.
+
+## 2026-11-21 16:15 UTC — first chunk of the note runs: 8 clean examples of 20; 6 tasks an hour; order and floor guard
+- **`r2_tk_train_00`** (20 failed TRAIN tasks with small fixes): note given 18 (14 at the first change, 4 at the deadline); real tests pass 8; clean examples 8; no leak words; 2 runs changed a file before the note could come.
+- **Pace:** 3 h 19 min for 20 tasks = 6.0 tasks an hour; the schedule assumed 9. A task uses 4.3 Kaggle-minutes on average = 39 real minutes at the ×9 clock, 4 at a time.
+- **What the box will hold:** about 160 more runs after the GPU test, 14 of them the held-out dev tasks. At 40% clean that is about 60 clean note runs plus pilot C's 8. The floor is 60; about 75 would fill the 19-hour training budget with every second copy.
+- **Order put back to the plan** (small fixes of both pools first): train tasks 61–84, the larger fixes, now run behind `rb2_clean` as group `train_big` (commit 6f4e3f6). Chunks `train_01` and `train_02` are unchanged.
+- **Floor guard** (commit 65167e6): if the box closes with fewer than 62 clean examples in the train and rb2 chunks, the chain goes on chunk by chunk, 6 hours over at most (two chunks). The floor rule itself (60 clean note runs from 45 tasks, builder's count) is unchanged; the approved box was 40 hours and this one is 30. Used in full it moves the verdict to about Nov 25 14:00 UTC, still before the Nov 26 00:10 slot.
+- **Both changes were installed while the GPU test held the cards** (no note run was active) and checked with the new dry run (`DRY=1`): chunk order, and the four box cases.
+- **Not changed: 4 tasks at a time.** The plain server gives 32 tokens/s to 1 request and 85 to 4; 6 at a time would add about 15–20% and needs a new clock scale that has not been validated.
+- **GPU test, started 16:01 UTC:** 15,360 tokens does not fit with either split (the last card fails at 15.0–15.1 GB; the run dies in the backward pass there before the other cards reach their peak). 14,336 and lower are being tried.
