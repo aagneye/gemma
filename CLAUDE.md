@@ -13,10 +13,14 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
   Final picks = best 31B bundle + best E4B bundle. Full plan: `research/PLAN_TO_WIN.md`.
 - Daily slots ship automatically: `vm/daily_ship.py` (tmux `dailyship` on the VM, cron watchdog) submits at 00:10 UTC the
   per-day override in `results/ship_schedule.txt` or line 1 of `results/ship.txt` (line 2 = fallback). **Kaggle refuses a
-  new submission while one is still scoring** (~13 h), so never submit manually late in the day.
+  new submission while one is still scoring** (~13 h in October; 24–30 h since Nov 18, so runs now follow each other
+  instead of daily and the shipper sends the next one the moment the queue is free). Never submit manually.
 - Slot policy (approved 2026-10-25): 31B best bundle every day, one E4B slot per week; LB slots never validate candidates;
   freeze new bundles Nov 24 (Nov 26 for the round-2 adapter bundle only, user Nov 19); final picks Dec 1 = earliest valid
   draw of the best 31B config + earliest valid E4B draw. Full plan: `research/PLAN_TO_WIN.md`.
+- Queue hold (user, 2026-11-22): from Nov 24 00:00 IST nothing is submitted until the round-2 verdict, so the adapter can
+  go in the moment it passes (`results/ship_hold.txt`, ends Nov 26 06:00 UTC at the latest). `vm/chain_r2.sh` releases it
+  on a stop or a REJECT and calls `vm/ship_adapter.sh` on ADOPT with RUNTIME OK; RUNTIME ASK goes to the user.
 
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
