@@ -38,7 +38,9 @@ if [ $START_AT -le 4 ]; then   # ---- 4: examples ------------------------------
   log "floor check: $EX clean note runs from $TK tasks (floor $FLOOR_EX from $FLOOR_TASKS)"
   { [ "${EX:-0}" -ge $FLOOR_EX ] && [ "${TK:-0}" -ge $FLOOR_TASKS ]; } || stop "too few clean examples (plan step 4)"
   rm -f $D/heldout.jsonl
-  [ -n "$DEVT" ] && $PY $V/exact_data.py build --notes $DEVT --hints $D/hints_train.jsonl --only results/lists/dev48.txt --out $D/heldout.jsonl 2>&1 | grep -v Warning | head -3 | tee -a $LOG
+  # --first-step: the held-out check scores the step at the note only, so every dev run whose step there is right counts
+  # (Nov 22: the clean-run rule left one dev task; with it the check stands on five)
+  [ -n "$DEVT" ] && $PY $V/exact_data.py build --notes $DEVT --hints $D/hints_train.jsonl --only results/lists/dev48.txt --first-step --out $D/heldout.jsonl 2>&1 | grep -v Warning | head -3 | tee -a $LOG
 fi
 
 if [ $START_AT -le 5 ]; then   # ---- 5: fit test, tokens, training ------------------------------------------------

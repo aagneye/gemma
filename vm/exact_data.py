@@ -13,7 +13,9 @@ the model's replies. Nothing is summarised, capped or rewritten.
   build          note runs (relay journals) and own wins -> examples, one JSON line each:
                    .venv/bin/python exact_data.py build --notes r2_tk_train_00 r2_tk_rb2_clean_00 ... --hints datasets/r2/hints_*.jsonl \
                        --own results/replica/bf5_train results/replica/bf5t06_train2 --exclude results/lists/dev48.txt --out datasets/r2/all.jsonl
-                   held-out set: --notes r2_tk_dev_00 --only results/lists/dev48.txt --out datasets/r2/heldout.jsonl (no --own)
+                   held-out set: --notes r2_tk_dev_00 --only results/lists/dev48.txt --first-step --out datasets/r2/heldout.jsonl (no --own)
+                   --first-step: the held-out rows are scored on the step at the note only, so a run also counts when it
+                   passes the tests but is not clean later on, or fails although its step at the note writes the real fix
   tokenize       examples -> train.parquet (input_ids, labels, n, fix_labels, kind, iid) for train_qlora.py:
                    .venv/bin/python exact_data.py tokenize datasets/r2/all.jsonl --max-len 14336 --out datasets/r2/tok_31b
                    held-out rows: ... tokenize datasets/r2/heldout.jsonl --first-step-only --w-first 1 --out datasets/r2/tok_heldout
@@ -255,6 +257,24 @@ def supervised_checks(steps, start):
     return why, edits
 
 
+def norm(s): return "\n".join(l.strip() for l in str(s or "").split("\n") if l.strip())
+
+
+def applies_block(e, hint):
+    """The step is an edit_file that went through and writes a block of the real fix (the block's new text, or most of it)."""
+    if not (e["name"] == "edit_file" and e["ok"] and e["path"]): return False
+    new = norm(e["args"].get("new_string"))
+    for b in hint.get("blocks") or []:
+        nb = norm(b["new"])
+        if b["path"] == e["path"] and new and nb and (nb in new or (new in nb and len(new) >= 0.6 * len(nb))): return True
+    return False
+
+
+# Reasons that speak about the step at the note itself. The held-out set (--first-step) scores that step only, so the
+# other reasons (no check after the last edit, a repeated call later on) do not take a run out of it.
+FIRST_STEP_WHY = ("first thinking is a bare copy", "the step at the note failed", "a name of the fix is not in the prompt")
+
+
 def examples_of(steps, start, base):
     """One example per stretch that holds learned steps (index >= start)."""
     out = []
@@ -305,8 +325,9 @@ def cmd_build(a):
                 continue
             stats["note given"] += 1
             kind = "note_first" if steps[t]["event"].endswith("first_change") else "note_deadline"
-            if not solved: drops["note run: tests fail"] += 1; continue
-            stats["note runs that pass the tests"] += 1
+            right_step = bool(a.first_step) and not solved and applies_block(steps[t], h)
+            if not solved and not right_step: drops["note run: tests fail"] += 1; continue
+            stats["note runs that pass the tests" if solved else "failed note runs whose step at the note writes the real fix"] += 1
             why, edits = supervised_checks(steps, t); part = steps[t:]
             text = "\n".join((e["msg"].get("reasoning_content") or "") + "\n" + (e["msg"].get("content") or "") for e in part)
             note_lines = {l.strip() for b in h.get("blocks") or [] for l in (b["old"] + "\n" + b["new"]).split("\n") if l.strip()}
@@ -317,13 +338,20 @@ def cmd_build(a):
             if not part[0]["kept"] or part[0]["masked"]: why.append("the step at the note failed")
             ctx = json.dumps(steps[t]["M"], ensure_ascii=False)
             if any(n not in ctx for n in h.get("new_public_names") or []): why.append("a name of the fix is not in the prompt")
+            step_only = bool(a.first_step) and bool(why or not solved)      # held-out set: a run that is not clean gives its step at the note
+            if step_only:
+                first = (part[0]["msg"].get("reasoning_content") or "") + "\n" + (part[0]["msg"].get("content") or "")
+                why = [w for w in why if w in FIRST_STEP_WHY] + (["leak word"] if LEAK_RX.search(first) else [])
             if why:
                 for w in why: drops["note run: " + w] += 1
                 stats["note runs dropped"] += 1; continue
             fix_lines = sorted({l.strip() for b in h.get("blocks") or [] for l in b["new"].split("\n") if l.strip() and l not in b["old"].split("\n")})
             ex = examples_of(steps, t, {"iid": iid, "repo": r.get("repo") or h.get("repo"), "kind": kind, "source": tag, "exact": True, "fix_lines": fix_lines})
+            if step_only: ex = [e for e in ex if e["seg"] == steps[t]["seg"]]
             if not ex: drops["note run: no learned step left"] += 1; continue
-            out += ex; stats["clean note runs"] += 1; stats[f"clean {kind}"] += 1
+            out += ex
+            if step_only: stats["runs kept for their step at the note only"] += 1
+            else: stats["clean note runs"] += 1; stats[f"clean {kind}"] += 1
 
     # 2. own wins of earlier runs (no relay): the run with the fewest calls per task, rebuilt from its trace
     cand = {}
@@ -439,6 +467,9 @@ def main():
     p = sub.add_parser("build"); p.add_argument("--notes", nargs="*"); p.add_argument("--hints", nargs="*"); p.add_argument("--own", nargs="*")
     p.add_argument("--bundle", default="submissions/budgetfit_v5"); p.add_argument("--only"); p.add_argument("--exclude", nargs="*")
     p.add_argument("--out", required=True); p.add_argument("--model", default=MODEL_DIR)
+    p.add_argument("--first-step", action="store_true", help="held-out set (rows are scored on the step at the note only): also keep a note run "
+                   "that passes the tests but is not clean later on, and a failed one whose step at the note writes a block of the real fix; "
+                   "such a run gives the stretch of that step only")
     p = sub.add_parser("tokenize"); p.add_argument("data"); p.add_argument("--out", required=True); p.add_argument("--max-len", type=int, default=14336)
     p.add_argument("--w-first", type=int, default=2); p.add_argument("--w-deadline", type=int, default=1); p.add_argument("--w-own", type=int, default=1)
     p.add_argument("--seed", type=int, default=0); p.add_argument("--model", default=MODEL_DIR)
