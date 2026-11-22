@@ -10,6 +10,8 @@
 # A step that fails ends the script with nothing handed over (the hold then runs out by itself).
 #   DRY=1            steps 1 and 2 only; nothing is sent to Kaggle and nothing is handed over
 #   CHECK_ZIP=<zip>  only compares that zip with the bundle (the test of step 4's comparison)
+#   SKIP_DS=1        step 3 is left out: the dataset named in DS is used as it is
+#   NO_HANDOVER=1    stops after step 4 (the end-to-end test of Nov 22 ran with a throwaway kernel name and both switches)
 set -u
 R=/mnt/biohub/kdata/gemma4; cd $R; V=~/gemma4_vm; K=$R/.venv/bin/kaggle; LOG=logs/ship_adapter.log
 BUNDLE=${1:-submissions/budgetfit_v5_lora2}; BUNDLE=${BUNDLE%/}; NAME=$(basename $BUNDLE)
@@ -43,16 +45,18 @@ log "notebook written: $(grep -o 'hash [0-9a-f]*' $S/notebook.txt | tail -1), da
 if [ -n "${DRY:-}" ]; then log "DRY: stopped before anything was sent to Kaggle"; exit 0; fi
 
 # 3 the adapter as a private dataset
-rm -rf $S/ds && mkdir -p $S/ds && cp $BUNDLE/adapters/main_lora/* $S/ds/
-printf '{"title": "%s", "id": "%s", "licenses": [{"name": "other"}]}\n' ${DS#*/} $DS > $S/ds/dataset-metadata.json
-if $K datasets status $DS 2>/dev/null | grep -qi ready; then
-  $K datasets version -p $S/ds -m "$NAME $(date -u +%F)" 2>&1 | grep -v Warning | tail -1 | cut -c1-200 | tee -a $LOG
-  sleep 60                                         # the new version takes a moment to show as the current one
-else
-  $K datasets create -p $S/ds 2>&1 | grep -v Warning | tail -1 | cut -c1-200 | tee -a $LOG
+if [ -z "${SKIP_DS:-}" ]; then
+  rm -rf $S/ds && mkdir -p $S/ds && cp $BUNDLE/adapters/main_lora/* $S/ds/
+  printf '{"title": "%s", "id": "%s", "licenses": [{"name": "other"}]}\n' ${DS#*/} $DS > $S/ds/dataset-metadata.json
+  if $K datasets status $DS 2>/dev/null | grep -qi ready; then
+    $K datasets version -p $S/ds -m "$NAME $(date -u +%F)" 2>&1 | grep -v Warning | tail -1 | cut -c1-200 | tee -a $LOG
+    sleep 60                                       # the new version takes a moment to show as the current one
+  else
+    $K datasets create -p $S/ds 2>&1 | grep -v Warning | tail -1 | cut -c1-200 | tee -a $LOG
+  fi
+  for i in $(seq 1 60); do $K datasets status $DS 2>/dev/null | grep -qi ready && break; sleep 30; done
 fi
-for i in $(seq 1 60); do $K datasets status $DS 2>/dev/null | grep -qi ready && break; sleep 30; done
-$K datasets status $DS 2>/dev/null | grep -qi ready || fail "the dataset $DS is not ready after 30 minutes"
+$K datasets status $DS 2>/dev/null | grep -qi ready || fail "the dataset $DS is not ready"
 
 # 4 push, wait, compare (the notebook stops by itself when an adapter file's sha256 is not the bundle's)
 $K kernels push -p $S/nb 2>&1 | grep -v Warning | tail -1 | cut -c1-240 > $S/push.txt; log "push: $(cat $S/push.txt)"
@@ -67,5 +71,6 @@ same_as_bundle $S/out/submission.zip || fail "the notebook's zip is not the vali
 log "the notebook's submission.zip ($(du -m $S/out/submission.zip | cut -f1) MB) unzips to the validated bundle"
 
 # 5 hand over
+if [ -n "${NO_HANDOVER:-}" ]; then log "NO_HANDOVER: every check passed for $NB v$VER; nothing was handed over"; exit 0; fi
 echo "$NB $VER $MSG" > results/ship_once.txt
 log "HANDED OVER: $NB v$VER is in results/ship_once.txt; daily_ship.py submits it as soon as no run is pending"
