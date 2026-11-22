@@ -12,20 +12,27 @@ Inputs (in /mnt/biohub/kdata/gemma4/results/):
   ship_hold.txt       optional hold windows "FROM UNTIL reason" (UTC, e.g. 2026-11-23T18:30 2026-11-26T06:00 ...):
                       while one is open nothing is submitted but the line of ship_once.txt. Delete the file to end it.
   ship_once.txt       optional single line "owner/kernel-slug version message ...": submitted first, once, also inside
-                      a hold window; the file is then renamed to ship_once.done_<ref>.txt (vm/ship_adapter.sh writes it)
+                      a hold window; the file is then renamed to ship_once.done_<ref>.txt (vm/ship_adapter.sh writes it),
+                      the hold file is put aside (its purpose is met) and ship_followup.txt is written
+  ship_followup.txt   "ref owner/kernel-slug version message ...", written by the loop when the once line went in. As
+                      long as that first run (ref) is COMPLETE with a public score, the same kernel goes in again before
+                      the default: a bundle that passed its checks and ran inside Kaggle's limits keeps the queue. A
+                      first run that failed (runtime, exception) gives nothing, so the default goes in again. Delete
+                      the file to go back to ship.txt.
 Outputs: logs/daily_ship.log (human log; ALERT lines when a day is at risk), results/ledger.csv (one row per ref).
 Truth comes from the API submission list, never from CLI text.
 
   python daily_ship.py                              the loop
-  python daily_ship.py --plan [--at 2026-11-24T10:00]   print what the loop would pick at that UTC time (no Kaggle call)
+  python daily_ship.py --plan [--at 2026-11-24T10:00]   print what the loop would pick at that UTC time (no Kaggle call;
+                      SHIP_FAKE_SUBS='[["58700001", "COMPLETE", "0.17"]]' stands in for the submission list)
 """
-import csv, datetime as dt, sys, time, traceback
+import csv, datetime as dt, json, os, sys, time, traceback, types
 from pathlib import Path
 
 R = Path("/mnt/biohub/kdata/gemma4"); COMP = "gemma-4-developer-agent"
 LOG = R / "logs/daily_ship.log"; LEDGER = R / "results/ledger.csv"
 SHIP = R / "results/ship.txt"; SCHED = R / "results/ship_schedule.txt"
-HOLD = R / "results/ship_hold.txt"; ONCE = R / "results/ship_once.txt"
+HOLD = R / "results/ship_hold.txt"; ONCE = R / "results/ship_once.txt"; FOLLOW = R / "results/ship_followup.txt"
 START_HHMM = (0, 10); ALERT_HHMM = (2, 0)
 FAKE_NOW = None                                    # --plan --at
 
@@ -54,14 +61,26 @@ def hold_now():
     return None
 
 
-def candidates():
-    """[(kernel, version, message, role)] for today: the once line, then the schedule override, then ship.txt in order."""
+def followup(subs):
+    """The once line again, while its first run (the ref noted when it went in) is COMPLETE with a public score."""
+    if not FOLLOW.exists(): return []
+    p = FOLLOW.read_text().strip().split(None, 3)
+    if len(p) < 3 or not p[2].isdigit(): return []
+    s = next((s for s in subs or [] if str(s.ref) == p[0]), None)
+    scored = s is not None and "COMPLETE" in str(getattr(s, "status", "")) and str(getattr(s, "public_score", "") or "").strip() not in ("", "None")
+    return [(p[1], p[2], p[3] if len(p) > 3 else "", "followup")] if scored else []
+
+
+def candidates(subs=None):
+    """[(kernel, version, message, role)] for today: the once line, the follow-up of a once line whose first run was
+    scored, then the schedule override, then ship.txt in order."""
     out = []
     if ONCE.exists():
         for l in ONCE.read_text().splitlines():
             p = l.split(None, 2)
             if len(p) >= 2 and not l.startswith("#") and p[1].isdigit():
                 out.append((p[0], p[1], p[2] if len(p) > 2 else "", "once")); break
+    out += followup(subs)
     if SCHED.exists():
         for l in SCHED.read_text().splitlines():
             p = l.split(None, 3)
@@ -74,9 +93,9 @@ def candidates():
     return out
 
 
-def pick(failures):
+def pick(failures, subs=None):
     """(candidate or None, hold or None): what goes in now. Inside a hold window only the once line may go."""
-    cands = [c for c in candidates() if failures.get(c[0], 0) < 2]; h = hold_now()
+    cands = [c for c in candidates(subs) if failures.get(c[0], 0) < 2]; h = hold_now()
     if h: cands = [c for c in cands if c[3] == "once"]
     return (cands[0] if cands else None), h
 
@@ -110,7 +129,7 @@ def main():
                 msg = f"waiting: pending ref {pending[0].ref} from {pending[0].date}"
                 if (t.hour, t.minute) >= ALERT_HHMM: msg = "ALERT no submission yet; " + msg
                 log(msg); time.sleep(900); continue
-            cand, hold = pick(failures)
+            cand, hold = pick(failures, subs)
             if not cand:
                 if hold: log(f"HOLD until {hold[0]:%Y-%m-%d %H:%M} UTC ({hold[1]}): nothing submitted")
                 else: log("ALERT no usable candidate (all failed twice today)")
@@ -126,7 +145,11 @@ def main():
                 if new:
                     log(f"SUBMITTED {kernel} v{version} ({role}) -> ref {new[0].ref}")
                     ledger_row(new[0].ref, kernel, version, role, message)
-                    if role == "once" and ONCE.exists(): ONCE.rename(ONCE.with_name(f"ship_once.done_{new[0].ref}.txt"))
+                    if role == "once":
+                        FOLLOW.write_text(f"{new[0].ref} {kernel} {version} {message}\n")
+                        if ONCE.exists(): ONCE.rename(ONCE.with_name(f"ship_once.done_{new[0].ref}.txt"))
+                        if HOLD.exists(): HOLD.rename(HOLD.with_name(f"ship_hold.met_{new[0].ref}.txt"))
+                        log(f"once line consumed; follow-up noted for ref {new[0].ref}; hold file put aside")
                 else:
                     log(f"submit call returned but no submission listed for today ({kernel} v{version}); retrying later")
                     time.sleep(600)
@@ -148,7 +171,8 @@ def plan(at):
     """What the loop would pick at a UTC time when no run is pending and the day has no submission yet."""
     global FAKE_NOW
     if at: FAKE_NOW = utc(at)
-    cand, hold = pick({})
+    subs = [types.SimpleNamespace(ref=r, status=s, public_score=sc) for r, s, sc in json.loads(os.environ.get("SHIP_FAKE_SUBS", "[]"))]
+    cand, hold = pick({}, subs)
     hs = f"until {hold[0]:%Y-%m-%d %H:%M} UTC ({hold[1]})" if hold else "none"
     print(f"at {now():%Y-%m-%d %H:%M} UTC | hold: {hs}")
     print("  would submit:", f"{cand[0]} v{cand[1]} ({cand[3]})" if cand else "nothing")
