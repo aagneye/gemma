@@ -18,9 +18,10 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
 - Slot policy (approved 2026-10-25): 31B best bundle every day, one E4B slot per week; LB slots never validate candidates;
   freeze new bundles Nov 24 (Nov 26 for the round-2 adapter bundle only, user Nov 19); final picks Dec 1 = earliest valid
   draw of the best 31B config + earliest valid E4B draw. Full plan: `research/PLAN_TO_WIN.md`.
-- Queue hold (user, 2026-11-22): from Nov 24 00:00 IST nothing is submitted until the round-2 verdict, so the adapter can
-  go in the moment it passes (`results/ship_hold.txt`, ends Nov 26 06:00 UTC at the latest). `vm/chain_r2.sh` releases it
-  on a stop or a REJECT and calls `vm/ship_adapter.sh` on ADOPT with RUNTIME OK; RUNTIME ASK goes to the user.
+- Queue hold (user, 2026-11-22): from Monday Nov 23 11:30 IST (06:00 UTC) nothing is submitted until the round-2 verdict,
+  so the adapter can go in the moment it passes (`results/ship_hold.txt`, ends Nov 26 06:00 UTC at the latest).
+  `vm/chain_r2.sh` releases it on a stop or a REJECT and calls `vm/ship_adapter.sh` on ADOPT with RUNTIME OK; RUNTIME ASK
+  goes to the user. An adapter whose first Kaggle run is scored keeps the queue (`results/ship_followup.txt`).
 
 ## Factory loop (every build)
 1. **Look back**: read `research/STATE.md` (what exists, what was tried, scores, open hypotheses) and the latest results.
