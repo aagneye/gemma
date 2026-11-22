@@ -299,3 +299,61 @@ correctly: Budget-Fit's rule is not to touch tests); conllu_35 and pythonapicore
   512. The chain's fit probe ends before this line; the first log line of the training shows it.
 - Also seen: the first update of a run has learning rate 0 (the warm-up starts at zero), so checkpoint 1 equals the
   base model (held-out loss ×1.000). In the real run that is 4 rows of about 400. Left as it is.
+
+## 11. Chunks 2–5, the held-out set and the scoring queue (Nov 22, 04:10 UTC)
+
+**Note runs so far** (position C, 4 at a time, box until Nov 22 18:42 UTC):
+
+| Chunk | Tasks | Solved | Note given | Noted runs that pass | Clean (report) | Time |
+|---|---|---|---|---|---|---|
+| `train_00` | 20 | 8 | 18 | 8 | 8 | 3 h 19 |
+| `train_01` | 20 | 1 | 16 | **0** | **0** | 3 h 11 |
+| `train_02` | 20 | 8 | 20 | 8 | 6 | 2 h 57 |
+| `dev_00` (held out) | 14 | 3 | 13 | 3 | 1 | 1 h 50 |
+| `rb2_clean_00` | 20 | 13 | 15 | 12 | 10 | 2 h 21 |
+
+- **Builder's count** (the floor's count; dry build with pilot C): **29 clean note runs from 29 tasks**; floor 60 from 45.
+  The report's count for the same runs is 32; the builder also drops a bare-copy first thinking, a failed step at the
+  note and a repeated call.
+- **What is left in the box:** `rb2_clean_01` to `_07` (136 tasks, about 2 h 20 a chunk) end near 18:50 UTC. At 8–10
+  clean a chunk that is 85–100 by the report's count, about 77–90 by the builder's. `train_big` and `rb2_rest` will not
+  run.
+- **Tokens (dry run at 14,336):** 163 rows, 1.85M tokens, 266k learned. A clean note run costs 26k tokens with its
+  second copy; the 92 own wins cost 1.10M. The 19-hour budget (3.57M) therefore holds about 95 note runs with every own
+  win kept. Section 9's "about 75 fill the budget" was too low: every chunk still adds training data.
+
+**`train_01`: 16 notes, no pass.** Not a tooling fault: the relay log is as in the other chunks, the note was in the
+prompt (110–700 extra prompt tokens), the real tests ran (1–7 failures each), and the server was the one `train_02`
+used. In most runs Gemma had the fix in its own thinking and wrote a version of its own. `pyjwt_644`: the note says
+`if not header["typ"]: del header["typ"]`; Gemma weighed it and wrote `if "typ" in headers and headers["typ"] is None`;
+the test passes an empty string. At the other TRAIN chunks' rate (16 of 38), 0 of 16 is a 1-in-6,000 draw, so these 20 tasks differ
+from their neighbours; why was not looked into (the list groups tasks by how clean the fix is, alphabetical inside).
+
+**Held-out set (commit 7deb28d).** The sanity check after training (step 6: error on the right change at least 10%
+lower, else stop) scores only the step at the note.
+- Built as the plan's tools stood, it had **one dev task**: 2 examples, one of them too long, so one row.
+- The GPU test's ×0.761 came from rows of two tasks it had just trained on; it says nothing about unseen tasks.
+- `exact_data.py build --first-step` now also keeps a dev run that passes the tests but is not clean later on (no
+  check after the last edit: `shtab_26`, `tinytag_171`) and a failed one whose step at the note writes a block of the
+  real fix (`spydrnet_70`, `symbolexporter_105`); such a run gives the stretch of that step only.
+- Result on `r2_tk_dev_00`: **5 rows from 5 tasks**, 2,464 learned tokens, 257 of them the fix's own lines. The
+  training set is the same bytes as before. `chain_r2.sh` passes the flag; `r2chain` was restarted while it waited.
+- The stop rule is unchanged. Five rows is still a small base: a narrow fail there is weak evidence.
+
+**Kaggle's scoring queue.** Run 58642667 (Budget-Fit, Nov 21 00:40 UTC) was still pending after 27.4 h.
+- Staff (thread 760471, Nov 20): 8–9 h in the queue, 9–10 h for the run, 2–2.5 h for scoring; 94% finish inside 24 h.
+  A reply 7 h ago says the queue is growing.
+- No new run can be sent while one is pending, and `daily_ship.py` sends the next the moment the queue is free. So
+  runs now follow each other at 24–30 h, not daily: about 7–8 runs are left before Dec 1, not 10.
+- For the adapter: a Budget-Fit run sent late on Nov 24 would still be pending at the verdict (Nov 25, 06:30–10:00
+  UTC) and hold the adapter back by up to a day. Whether to keep the queue free from Nov 24 is the user's call.
+
+**Forum, Nov 19–22** (read Nov 22):
+- 760126: a 0.29 score was a metric exploit; the metric was patched and the runs rescored. Ties go to the earlier
+  submission (staff).
+- 760309: an adapter costs 22–25% of the tokens per second on an A100 and 10–15% on 4×L4 (ours: ×1.128 at rank 16).
+  An adapter of zeros lost 7 of 129 tasks at the same time budget (one run).
+- 760830: vLLM 0.19.1's gemma4 tool-call parser never returns on a list item in plain quotes that holds a `]`
+  (`_parse_gemma4_array('"--detail", "List[int]"')`); the server stops answering. **Reproduced on our copy.**
+  Budget-Fit has one tool with a list argument (`get_code_subgraph`). In 145 note-run sessions (2,999 replies) Gemma
+  never called a graph tool and never wrote a list argument, so the bundle is left as it is.
