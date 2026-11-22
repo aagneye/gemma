@@ -783,3 +783,8 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - Today's run cannot clear before about Nov 23 08:00 UTC. A hold from Nov 23 06:00 UTC (11:30 IST) would therefore make today's run the last one before the verdict and keep the queue free for certain. **Asked of the user; until answered the approved window stays.**
 - **Sixth chunk `rb2_clean_01` (02:51–04:36 UTC):** 16 of 20 solved, note given 18, **13 clean**. Report count in the chunks so far: 37 (plus pilot C's 8).
 - **04:41 UTC, user: "Yes, start Monday".** The hold now starts **Nov 23 06:00 UTC (Monday 11:30 IST)**; its end (Nov 26 06:00 UTC) is unchanged. `results/ship_hold.txt` was replaced in one move; the shipper reads it at every check, so no restart. `--plan`: Budget-Fit until Nov 23 05:59, nothing from 06:00, Budget-Fit again from Nov 26 06:00. The run that goes in today when 58642667 clears is the last one before the verdict.
+
+## 2026-11-22 08:35 UTC — Nov 21 run scored 0.13 after 30.6 h; today's run is in; 47 clean note runs in the chunks
+- **Kaggle:** 58642667 (Budget-Fit, Nov 21 00:40 UTC) = **0.13** (8 of 58), finished after 30.6 h. Budget-Fit's 17 scored runs: 8 solved ×4, 9 ×3, 10 ×8, 11 ×1, 12 ×1; mean 9.53 (0.159).
+- **Next run:** the shipper sent Budget-Fit at 07:21 UTC (ref 58708881), the moment the queue was free. At 30 h it clears near Nov 23 14:00 UTC, inside the hold (from Nov 23 06:00 UTC), so nothing follows it and the queue is free for the verdict.
+- **Note runs:** `rb2_clean_02` 12 of 20 solved, 14 notes, 10 clean (04:36–06:28 UTC). Report count in the chunks: **47** (plus pilot C's 8); `rb2_clean_03` is 16 of 20 done at 08:32 UTC. The floor (60 by the builder's count) should be passed with the next two chunks.
