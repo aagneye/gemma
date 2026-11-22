@@ -21,7 +21,10 @@ FLOOR_EX=${FLOOR_EX:-60}; FLOOR_TASKS=${FLOOR_TASKS:-45}; MODEL=gemma-4-31b-it-q
 FIT_TRY=${FIT_TRY:-$(cat $D/fit_try.txt 2>/dev/null)}; FIT_TRY=${FIT_TRY:-"15360 14336 13312 12288"}; TRAIN_HOURS=${TRAIN_HOURS:-19}
 RUN=runs/31b_r2_r$RANK; BUNDLE=submissions/budgetfit_v5_lora2
 log() { echo "$(date -u) | $*" | tee -a $LOG; }
-stop() { log "ROUND STOPPED: $*"; tmux kill-session -t vllm 2>/dev/null; exit 0; }
+# The daily shipper keeps Kaggle's queue free for this round's verdict (results/ship_hold.txt; user, Nov 22). When the
+# round ends without an adapter to send, the hold is taken away here so that Budget-Fit goes in again at once.
+release() { [ -f results/ship_hold.txt ] && { mv results/ship_hold.txt results/ship_hold.released_$(date -u +%m%d_%H%M).txt; log "Kaggle hold released: $*"; }; return 0; }
+stop() { log "ROUND STOPPED: $*"; release "the round stopped"; tmux kill-session -t vllm 2>/dev/null; exit 0; }
 free() { for u in $(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits); do [ "$u" -lt 1000 ] || return 1; done; }
 wait_free() { for i in $(seq 1 60); do free && return 0; sleep 5; done; return 1; }
 solved() { python3 -c "import csv,sys; print(sum(r['resolved']=='True' for d in sys.argv[1:] for r in csv.DictReader(open('results/replica/'+d+'/results.csv'))))" "$@"; }
@@ -143,5 +146,16 @@ python3 $V/verdict.py --base $B $B --cand $A4 $B4 --tasks results/lists/eval_ts0
 TOK=$(grep -o "tokens x[0-9.]*" results/replica/r2_verdict.txt | tail -1 | grep -o "[0-9.]*$")
 python3 -c "
 t = float('${TOK:-1}'); s = $L4_SLOW; p = round(s * t, 3)
-print(f'RUNTIME {\"OK\" if p <= 1.05 else \"ASK\"}: L4 slowdown x{s} times output tokens x{t} = x{p} of Budget-Fit (rule: at most x1.05)')" | tee -a $LOG
+print(f'RUNTIME {\"OK\" if p <= 1.05 else \"ASK\"}: L4 slowdown x{s} times output tokens x{t} = x{p} of Budget-Fit (rule: at most x1.05)')" | tee results/replica/r2_runtime.txt | tee -a $LOG
+# What follows the verdict (Nov 22). ADOPT with RUNTIME OK: the bundle is uploaded, checked against the validated one and
+# handed to the daily shipper, which submits it as soon as no run is pending (ship_adapter.sh; a failed step hands
+# nothing over). ADOPT with RUNTIME ASK: the user decides; the hold stays until its end time. Anything else: the hold
+# is released and Budget-Fit goes in again.
+VD=$(grep -o "^VERDICT [A-Z]*" results/replica/r2_verdict.txt | tail -1); RT=$(grep -o "^RUNTIME [A-Z]*" results/replica/r2_runtime.txt | tail -1)
+case "$VD/$RT" in
+  "VERDICT ADOPT/RUNTIME OK") log "ADOPT and RUNTIME OK: the adapter bundle goes to Kaggle"
+                              bash $V/ship_adapter.sh $BUNDLE 2>&1 | grep -E "HANDED OVER|NOT HANDED OVER" | tail -1 | cut -c1-300 | tee -a $LOG;;
+  "VERDICT ADOPT/"*)          log "ADOPT, but the runtime rule says ASK (or gave no line): nothing is submitted; the user decides";;
+  *)                          release "the verdict is not ADOPT ($VD)";;
+esac
 log "chain_r2 done; the server with the adapter stays up"
