@@ -9,7 +9,8 @@ toward the goal without waiting to be asked. Read this file and `research/STATE.
 - Do not wait for Kaggle scores to decide: replicate the public-score evaluation on the Azure VM (and in Kaggle notebooks)
   and decide from local, paired measurements. Train on whatever GPUs are free.
 - Keep going until the goal is reached. Final deadline Dec 2 2026; paper track Nov 12.
-- Second target (added 2026-10-24): the **$10k Small Model bonus** (best E2B/E4B-based submission; top public is 0.06).
+- Second target (added 2026-10-24): the **$10k Small Model bonus** (best E2B/E4B-based submission on the private set;
+  top public 0.12 on Nov 21, ours 0.01; rules and odds in `research/raw/20_small_model_prize.md`).
   Final picks = best 31B bundle + best E4B bundle. Full plan: `research/PLAN_TO_WIN.md`.
 - Daily slots ship automatically: `vm/daily_ship.py` (tmux `dailyship` on the VM, cron watchdog) submits at 00:10 UTC the
   per-day override in `results/ship_schedule.txt` or line 1 of `results/ship.txt` (line 2 = fallback). **Kaggle refuses a
@@ -64,7 +65,13 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
 - Every run leaves the run log (`vm/autopsy.py`: per task what went wrong and why), the clock ledger (`vm/clock_ledger.py` ->
   `clock.md`: where the moves and minutes went, clock-or-move losses) and the request log (`REQ_DUMP`).
 - 31B adapter training: round 2 runs under `research/PLAN_ROUND2.md` (user approval Nov 19; its stop rules and its
-  pass rule are fixed there; round 1 tied Budget-Fit and broke Kaggle's 12-hour limit). E4B work is parked.
+  pass rule are fixed there; round 1 tied Budget-Fit and broke Kaggle's 12-hour limit).
+- E4B side track (user, 2026-11-22; `research/PLAN_E4B.md`): tmux `e4b_chain` (`vm/e4b_chain.sh`) takes the four cards
+  only after round 2 has ended by its own word (`ROUND STOPPED:` or `chain_r2 done` in `logs/r2_chain.log`; after an
+  ADOPT 30 minutes later and not while `results/e4b_wait.txt` exists). It gives them back by itself when tmux `r2chain`,
+  `r2notes` or `vllm` appears; by hand: `touch results/e4b_yield` or `bash ~/gemma4_vm/e4b_stop.sh`. It changes no
+  main-track file. One Kaggle run only for an E4B bundle that beats `e4b_bf5` by +3 on the 77 EVAL tasks (freeze Nov 28
+  for that one bundle; `vm/e4b_ship.sh` hands nothing over while the adapter holds the queue: the user decides).
 - A finished GPU job is always followed by a queued one (`vm/after_session.sh`); the GPUs never wait for tooling or reviews.
 
 ## Hard facts (verified; details in research/ and memory)
@@ -82,4 +89,5 @@ Project skills from affaan-m/everything-claude-code live in `.claude/skills/` (M
 ## Where things are
 - `research/STATE.md` ledger · `research/ARCHITECTURE_V4.md` post-mortem + architecture · `research/PLAN_TOP10.md` plan history
 - `research/PLAN_ROUND2.md` the approved training plan (Nov 19) · `research/raw/18_training_round2.md` its measurements
+- `research/PLAN_E4B.md` the approved small-model side track (Nov 22) · `research/ledger/e4b_track.md` its run ledger
 - `vm/` all scripts (copied to `~/gemma4_vm/` on the VM) · VM project root `/mnt/biohub/kdata/gemma4`

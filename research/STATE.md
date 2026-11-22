@@ -788,3 +788,24 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
 - **Kaggle:** 58642667 (Budget-Fit, Nov 21 00:40 UTC) = **0.13** (8 of 58), finished after 30.6 h. Budget-Fit's 17 scored runs: 8 solved ×4, 9 ×3, 10 ×8, 11 ×1, 12 ×1; mean 9.53 (0.159).
 - **Next run:** the shipper sent Budget-Fit at 07:21 UTC (ref 58708881), the moment the queue was free. At 30 h it clears near Nov 23 14:00 UTC, inside the hold (from Nov 23 06:00 UTC), so nothing follows it and the queue is free for the verdict.
 - **Note runs:** `rb2_clean_02` 12 of 20 solved, 14 notes, 10 clean (04:36–06:28 UTC). Report count in the chunks: **47** (plus pilot C's 8); `rb2_clean_03` is 16 of 20 done at 08:32 UTC. The floor (60 by the builder's count) should be passed with the next two chunks.
+
+## 2026-11-22 16:35 UTC — E4B side track approved and queued behind round 2 (its own session; plan `research/PLAN_E4B.md`)
+- **User (Nov 22):** asked whether the Small Model prize is worth a shot and approved a small, bounded side track. Research: `research/raw/20_small_model_prize.md`. Ledger: `research/ledger/e4b_track.md`.
+- **Read on Kaggle today:**
+  - $10,000 for the best E4B or E2B entry on the private tasks. It must be one of the two final picks. Ties go to the earlier entry. Same deadline as the main prize.
+  - Small-model board (Nov 21): 2 teams at 7 of 58, 31 at 6, 67 or more at 5. Ours: 1 of 58 (Oct 27, ref 57707213).
+  - The public Budget-Fit prompt on the E4B with six tools: 4, 5, 4 of 58 for another team. One team reports thinking off 16 against 10 solved of 114 practice tasks; we never ran 0.
+- **Odds told to the user:** 1 to 2 in 100. A late entry must beat the whole field outright, which needs an agent 1.6–2 times as good as the pack's.
+- **What the approval covers:** preparation now; the four cards for E4B tests once round 2 has ended; one Kaggle run for a bundle that passes, with the freeze at Nov 28 for that one bundle; no Kaggle run without a pass; final picks stay the user's call on Dec 1.
+- **Built without GPUs:**
+  - Bundles `e4b_bf5` (Budget-Fit V5 files, E4B model line, six tools, prompt line 12 removed), `e4b_bf5_t1k`, `e4b_bf5_t256`, `e4b_bf5_t0` (thinking 1,024 / 256 / 0). All VALID and compiled.
+  - Lists `results/lists/e4b_devA.txt`, `e4b_devB.txt`: 64 + 64 tasks the 31B solves, 95 projects, none from EVAL.
+  - Scripts `vm/e4b_*.sh|py`. `PLUMB=1 bash ~/gemma4_vm/e4b_selftest.sh` passed: picker rules, round-2 endings, dry runs, the watchdog, and two arms on two tasks against stand-in servers (own port only, no internet, `enable_thinking: false` for thinking 0).
+- **Queued:** tmux `e4b_chain` since 16:30 UTC. Screen 1 (thinking 4,096 / 1,024 / 256 / 0 on the 128 dev tasks) → screen 2 if it fits (the two E1+R1 lines) → confirmation against `e4b_bf5` on the 77 EVAL tasks, 4 paired passes. Pass = +3 solved per pass and at most 270 Kaggle-seconds per task. Time box Nov 27 18:00 UTC.
+- **For the main track (nothing of it was changed):**
+  - The chain starts only when `r2chain` and `r2notes` are gone and `logs/r2_chain.log` holds `ROUND STOPPED:` or ends with `chain_r2 done`. After an ADOPT it waits 30 minutes and as long as `results/e4b_wait.txt` exists.
+  - It then ends the idle 31B server (tmux `vllm`) and runs four E4B servers on ports 8001–8004 (tmux `e4b_srv_*`).
+  - **To get the cards back:** start the main-track session as usual (the chain ends its arms and servers within seconds when tmux `r2chain`, `r2notes` or `vllm` appears), or `touch results/e4b_yield`, or `bash ~/gemma4_vm/e4b_stop.sh`.
+  - After a pass, `e4b_ship.sh` hands over through a dated line in `results/ship_schedule.txt` only. While `ship_once.txt` or `ship_followup.txt` exists it hands nothing over and the user decides.
+- **Two corrections to the approved draft, told to the user before building:** the base has six tools, not nine (the public E4B profile; and vLLM 0.19.1 can hang on the list argument of `get_code_subgraph`, checked only for the 31B); the screen uses 128 different tasks in two halves instead of 64 twice.
+- **Side finding:** `.claude/rules/git-commits.md` (untracked) names the repository `aagneye/Precedent`; this repo's remote is `aagneye/gemma`. Commits of this track go to `origin` (`aagneye/gemma`).

@@ -74,3 +74,28 @@ GPU 3 is left free for the fine-tuning session unless it stays idle overnight.
 | Date (UTC) | Bundle | Port/GPU | Scale | n | Resolved | vs baseline (W/L) | Mean / p90 s | 120-task proj. at Kaggle speed | Buckets | Status |
 |---|---|---|---|---|---|---|---|---|---|---|
 | 10-25 09:52 | e4b_v3t2k_cal | 8001 / GPU1 | 3 | 71 | - | calibration | - | - | - | running |
+
+(The October rows above were never filled in here; their results are in `research/STATE.md`, Oct 26–29: calibration
+69 of 71 tasks as on Kaggle, `e4b_v5` 10/71, `e4b_e5` 10/71, short prompt 7/71, adapter v1 0/42 against 4/42.)
+
+## 2026-11-22 — side track restarted (user approval; plan `research/PLAN_E4B.md`, research `research/raw/20_small_model_prize.md`)
+Owner: the session "Gemma hackathon small model strategy". It commits its own files only (`vm/e4b_*`, this file,
+`PLAN_E4B.md`, note 20) and changes no main-track file.
+
+### Built and checked without GPUs (16:00–16:30 UTC)
+- **Bundles** (`bash ~/gemma4_vm/e4b_build.sh`; each VALID and compiled with six tools, 4,525 instruction characters):
+  `e4b_bf5` (Budget-Fit V5 with the E4B model line, the three graph tools off the list, prompt line 12 removed;
+  thinking 4,096), `e4b_bf5_t1k`, `e4b_bf5_t256`, `e4b_bf5_t0` (one line each: the thinking budget).
+- **Task lists** (`python3 ~/gemma4_vm/e4b_dev_select.py`, seed 0): `results/lists/e4b_devA.txt` (64 tasks, 54
+  projects), `e4b_devB.txt` (64 tasks, 53 projects), `e4b_dev128.txt` (95 projects); all from `bf5_train_solved.txt`.
+- **Self-test** (`PLUMB=1 bash ~/gemma4_vm/e4b_selftest.sh`): passed. Two arms on two tasks against stand-in servers
+  on ports 8001 and 8002: each arm reached only its own port, the internet was cut off, the 4,096 bundle sent
+  `enable_thinking: true` with `thinking_token_budget: 4096`, the 0 bundle `enable_thinking: false` and no budget,
+  both six tools; scale 3 and the 1,800-s request limit in both run logs.
+- **Queued:** tmux `e4b_chain` since 16:30 UTC. It waits for round 2's own end line and then runs screen 1.
+
+### Run ledger (filled as the chain goes on)
+| Date (UTC) | Stage | Arm (bundle) | Tasks | Solved | Against the base | Kaggle-s per task | Note |
+|---|---|---|---|---|---|---|---|
+| | screen 1, half A | `e4b_bf5` / `_t1k` / `_t256` / `_t0` | 64 | | | | |
+| | screen 1, half B | `e4b_bf5` / `_t1k` / `_t256` / `_t0` | 64 | | | | |
