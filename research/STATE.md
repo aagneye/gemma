@@ -809,3 +809,10 @@ Confirmed bugs and fixes (all deployed; details in vm/README.md):
   - After a pass, `e4b_ship.sh` hands over through a dated line in `results/ship_schedule.txt` only. While `ship_once.txt` or `ship_followup.txt` exists it hands nothing over and the user decides.
 - **Two corrections to the approved draft, told to the user before building:** the base has six tools, not nine (the public E4B profile; and vLLM 0.19.1 can hang on the list argument of `get_code_subgraph`, checked only for the 31B); the screen uses 128 different tasks in two halves instead of 64 twice.
 - **Side finding:** `.claude/rules/git-commits.md` (untracked) names the repository `aagneye/Precedent`; this repo's remote is `aagneye/gemma`. Commits of this track go to `origin` (`aagneye/gemma`).
+
+## 2026-11-23 14:25 UTC — note runs ended at 86 clean; adapter trained (no lost update); sanity check passed
+- **Note runs** ended 19:29 UTC Nov 22 by the box: 86 clean examples by the report count; `train_big` and `rb2_rest` not run. Builder: 252 examples, 307 rows, 3.45M tokens (502k learned), all inside the 19-hour budget.
+- **Training** `runs/31b_r2_r16`: 77 updates, 17.5 h (18.2 ms per token), **no NaN gradient, loss scale 512 throughout** (the Nov 21 fix held), no OOM row.
+- **Sanity check** (5 held-out dev rows): step loss ×0.747 of the base (need ≤ ×0.90), fix lines ×0.620 → PASS. Checkpoints 10/20 ×0.92/×0.93.
+- **Bundle** `submissions/budgetfit_v5_lora2` validated (rank 16, 234 MiB). Server with the adapter up 13:29 UTC; effect check and then test pass 1 (43 uncertain EVAL tasks, 11 needed) follow.
+- **Kaggle:** 58708881 (Nov 22) = **0.13**. Hold active since 06:00 UTC.
