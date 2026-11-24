@@ -108,3 +108,12 @@ Owner: the session "Gemma hackathon small model strategy". It commits its own fi
 |---|---|---|---|---|---|---|---|
 | | screen 1, half A | `e4b_bf5` / `_t1k` / `_t256` / `_t0` | 64 | | | | |
 | | screen 1, half B | `e4b_bf5` / `_t1k` / `_t256` / `_t0` | 64 | | | | |
+
+### 2026-11-24 06:30 UTC — round 2 stopped; screen 1 running; thinking-off run handed to the shipper (user: "Yes, submit it")
+- Round 2 stopped at test pass 1 (42 of 77, 45 needed; 05:43 UTC). The hold was released and the shipper sent
+  Budget-Fit at 05:55 UTC (ref 58814251, pending), so no second run can go in until it scores (about Nov 25 06:00–12:00 UTC).
+- The E4B chain took the four cards at 05:43 UTC: screen 1 half A runs (`e4b_s1_base_A`, `_t1k_A`, `_t256_A`, `_t0_A`).
+- tmux `e4b_ship` (`e4b_ship.sh submissions/e4b_bf5_t0`, kernel `aagneye/gemma4-e4b-bf5-t0` v3, zip checked against the
+  bundle) keeps a dated line in `results/ship_schedule.txt` for each UTC day until the ledger shows the run. The schedule
+  line ranks above `ship.txt`, so the E4B run goes in the moment the Budget-Fit run has scored; Budget-Fit follows it.
+- If screen 1 picks another thinking level before the queue is free, the line is switched to that bundle.
