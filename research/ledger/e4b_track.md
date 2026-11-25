@@ -117,3 +117,18 @@ Owner: the session "Gemma hackathon small model strategy". It commits its own fi
   bundle) keeps a dated line in `results/ship_schedule.txt` for each UTC day until the ledger shows the run. The schedule
   line ranks above `ship.txt`, so the E4B run goes in the moment the Budget-Fit run has scored; Budget-Fit follows it.
 - If screen 1 picks another thinking level before the queue is free, the line is switched to that bundle.
+
+### 2026-11-25 12:45 UTC — screens done: thinking off is the worst; base (4,096) kept; next E4B run = e4b_bf5
+| Screen 1 (128 dev tasks, 2 halves) | Solved | Against base |
+|---|---|---|
+| `e4b_bf5` (thinking 4,096) | 59 | base |
+| `_t1k` | 55 | −2.0 per 64 |
+| `_t256` | 53 | −3.0 per 64 |
+| `_t0` (thinking off) | 49 | −5.0 per 64 |
+- Screen 2 (base ×2 against base + E1+R1 ×2, 256 task-runs each): 113 against 119, +1.5 per 64 (bar +2); failed edits
+  not lower. Nothing reached the bar: the chain stopped at 03:02 UTC with no confirmation and released the cards.
+- The public "thinking off" result does not hold on unfamiliar projects for us: fewer solved at every lower budget.
+- Kaggle: Budget-Fit 58814251 scored 0.13. The `e4b_bf5_t0` run (handed over Nov 24, before the screen ended) went in
+  at 12:12 UTC (ref 58886187, pending); the switch to the screen's pick did not happen because no one watched the
+  screen's end. tmux `e4b_ship2` now hands `e4b_bf5` (kernel `aagneye/gemma4-e4b-bf5` v1, zip checked) to the next
+  free slot, so the best-tested E4B bundle has a draw before Dec 1.
