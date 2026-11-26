@@ -132,3 +132,20 @@ Owner: the session "Gemma hackathon small model strategy". It commits its own fi
   at 12:12 UTC (ref 58886187, pending); the switch to the screen's pick did not happen because no one watched the
   screen's end. tmux `e4b_ship2` now hands `e4b_bf5` (kernel `aagneye/gemma4-e4b-bf5` v1, zip checked) to the next
   free slot, so the best-tested E4B bundle has a draw before Dec 1.
+
+### 2026-11-26 15:10 UTC — Kaggle: thinking off 0.05; where the base loses; screen 3 (compile checker) started
+- Kaggle: `e4b_bf5_t0` (58886187) scored **0.05** (3 of 58), the low end of the pack. `e4b_bf5` went in at 12:42 UTC
+  (58947037, pending; score expected Nov 27 12:00–19:00 UTC).
+- **Where the base loses** (384 dev runs: `e4b_s1_base_*`, `e4b_s2_base*_*`): solved 172. Of 212 failures: wrong
+  behaviour 41, **syntax or import error in the patch 33**, other test error 31, wrong files 27, missing name not in
+  the issue 22, in the issue 21, gold file missed 19, no source edit 14. Inside the 33: IndentationError 9 and
+  SyntaxError 8 from its own edit (mostly on the right file, often with no check after the last edit), ImportError 14
+  (mostly a name it never added), NameError 1.
+- A prompt line asking for `py_compile` had almost no uptake (1 of 48 runs on the 31B; 24% for another team's E4B).
+  So the fix is structural: **`e4b_chk`** (`vm/specs/e4b_chk.json`) = SequentialAgent [solver, checker]. The solver is
+  the `e4b_bf5` prompt with the submit step turned into a hand-over line (`vm/prompts/e4b_chk_solver.md`); the checker
+  (`vm/prompts/e4b_chk_checker.md`) runs `py_compile` on the edited files, fixes at most two syntax errors, submits.
+  Same budgets, sampling and six tools. VALID + COMPILED.
+- **Screen 3** (tmux `e4b_s3`, `vm/e4b_screen3.sh`): `e4b_chk` ×3 and a fresh `e4b_bf5` on both dev halves; judged
+  against the base's three earlier passes (+2 per 64 bar) and the runtime rule. If it passes before the queue frees,
+  it takes the next Kaggle slot (`e4b_ship.sh`).
