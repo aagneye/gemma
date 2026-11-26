@@ -1,0 +1,15 @@
+{
+  "name": "e4b_chk",
+  "model": "gemma-4-e4b-it-qat-w4a16-ct",
+  "eval": {"timeout": 240, "calls": 28, "minutes": 8, "turns": 80},
+  "sampling": {"thinking": 4096, "temperature": 0.2, "top_p": 0.95, "max_output_tokens": 8192},
+  "wrapper": "sequential",
+  "root_name": "swe_pipeline",
+  "description": "E4B with a compile checker: the solver (the e4b_bf5 prompt, hand-over instead of submit) edits; the checker runs py_compile on the edited files, fixes a syntax error, submits.",
+  "phases": [
+    {"name": "solver", "prompt": "e4b_chk_solver.md", "tools": ["run_command", "read_file", "edit_file", "write_file", "get_status"],
+     "description": "Finds and edits the source; ends with a CHANGED line; cannot submit."},
+    {"name": "checker", "prompt": "e4b_chk_checker.md", "tools": ["run_command", "read_file", "edit_file", "submit_patch"],
+     "description": "Compiles the edited Python files, fixes a syntax error, submits."}
+  ]
+}
